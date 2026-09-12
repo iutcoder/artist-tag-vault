@@ -6,12 +6,14 @@ import 'package:artist_tag_vault/src/models/account_usage.dart';
 import 'package:artist_tag_vault/src/models/app_settings.dart';
 import 'package:artist_tag_vault/src/models/generation_preset.dart';
 import 'package:artist_tag_vault/src/models/saved_sample.dart';
+import 'package:artist_tag_vault/src/services/danbooru_autocomplete.dart';
 import 'package:artist_tag_vault/src/services/novelai_api.dart';
 import 'package:artist_tag_vault/src/services/prompt_composer.dart';
 import 'package:artist_tag_vault/src/services/sample_storage.dart';
 import 'package:artist_tag_vault/src/services/settings_store.dart';
 import 'package:artist_tag_vault/src/settings_dialog.dart';
 import 'package:artist_tag_vault/src/vault_page.dart';
+import 'package:artist_tag_vault/src/widgets/danbooru_artist_field.dart';
 import 'package:artist_tag_vault/src/widgets/glass_panel.dart';
 import 'package:artist_tag_vault/src/widgets/numeric_stepper_field.dart';
 import 'package:flutter/material.dart';
@@ -31,6 +33,7 @@ class _HomePageState extends State<HomePage> {
   static const int _maximumSeed = 0xffffffff;
 
   final _artistController = TextEditingController();
+  final _artistFocusNode = FocusNode();
   final _promptController = TextEditingController();
   final _undesiredController = TextEditingController();
   final _advancedScrollController = ScrollController();
@@ -38,6 +41,7 @@ class _HomePageState extends State<HomePage> {
   final _settingsStore = SettingsStore();
   final _api = NovelAiApi();
   final _sampleStorage = SampleStorage();
+  final _danbooruAutocomplete = DanbooruAutocompleteService();
   final _random = Random.secure();
 
   AppSettings _settings = AppSettings.defaults();
@@ -68,10 +72,12 @@ class _HomePageState extends State<HomePage> {
   @override
   void dispose() {
     _artistController.dispose();
+    _artistFocusNode.dispose();
     _promptController.dispose();
     _undesiredController.dispose();
     _advancedScrollController.dispose();
     _compactScrollController.dispose();
+    _danbooruAutocomplete.close();
     super.dispose();
   }
 
@@ -504,15 +510,12 @@ class _HomePageState extends State<HomePage> {
             ),
           ),
           const SizedBox(height: 14),
-          TextField(
+          DanbooruArtistField(
             controller: _artistController,
+            focusNode: _artistFocusNode,
+            service: _danbooruAutocomplete,
             enabled: !_busy,
             onSubmitted: (_) => _generate(),
-            decoration: const InputDecoration(
-              labelText: 'Artist name',
-              prefixText: 'artist:',
-              hintText: 'artist name',
-            ),
           ),
           const SizedBox(height: 12),
           Row(

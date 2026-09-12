@@ -27,6 +27,7 @@ class _VaultPageState extends State<VaultPage> {
   final _search = TextEditingController();
   final _transform = TransformationController();
   final _pageScroll = ScrollController();
+  final _keyboardFocus = FocusNode(debugLabel: 'Vault keyboard navigation');
   List<SavedSample> _samples = const [];
   bool _loading = true;
   bool _deleting = false;
@@ -37,6 +38,10 @@ class _VaultPageState extends State<VaultPage> {
   Size? _imageSize;
   Size? _viewerSize;
   String? _error;
+  bool _searchFocused = false;
+  bool _selectionMode = false;
+  final Set<String> _selectedPaths = {};
+  String? _selectionAnchorPath;
   bool _fitMode = true;
   Matrix4? _gestureStartTransform;
   Offset? _gestureStartScenePoint;
@@ -60,6 +65,7 @@ class _VaultPageState extends State<VaultPage> {
     _search.dispose();
     _transform.dispose();
     _pageScroll.dispose();
+    _keyboardFocus.dispose();
     _wheelResetTimer?.cancel();
     _navigationCueTimer?.cancel();
     super.dispose();
@@ -75,6 +81,9 @@ class _VaultPageState extends State<VaultPage> {
       if (!mounted) return;
       setState(() {
         _samples = samples;
+        _selectionMode = false;
+        _selectedPaths.clear();
+        _selectionAnchorPath = null;
         _modelId ??= samples.isEmpty ? null : samples.first.modelId;
         final visible = _modelSamples;
         _artist = visible.isEmpty ? null : visible.first.artist;
@@ -117,6 +126,9 @@ class _VaultPageState extends State<VaultPage> {
   void _selectModel(String? value) {
     setState(() {
       _fitMode = true;
+      _selectionMode = false;
+      _selectedPaths.clear();
+      _selectionAnchorPath = null;
       _modelId = value;
       _artist = _modelSamples.isEmpty ? null : _modelSamples.first.artist;
       _selected = _artistSamples.isEmpty ? null : _artistSamples.first;
@@ -127,6 +139,9 @@ class _VaultPageState extends State<VaultPage> {
   void _selectArtist(String artist) {
     setState(() {
       _fitMode = true;
+      _selectionMode = false;
+      _selectedPaths.clear();
+      _selectionAnchorPath = null;
       _artist = artist;
       _selected = _artistSamples.isEmpty ? null : _artistSamples.first;
     });
@@ -141,16 +156,126 @@ class _VaultPageState extends State<VaultPage> {
     unawaited(_readSelectedImageSize());
   }
 
+  void _toggleSelectionMode() {
+    setState(() {
+      _selectionMode = !_selectionMode;
+      _selectedPaths.clear();
+      _selectionAnchorPath = null;
+      if (_selectionMode && _selected != null) {
+        final path = _selected!.file.path;
+        _selectedPaths.add(path);
+        _selectionAnchorPath = path;
+      }
+    });
+    _keyboardFocus.requestFocus();
+  }
+
+  void _selectAllArtistSamples() {
+    if (_artistSamples.isEmpty) return;
+    setState(() {
+      _selectionMode = true;
+      _selectedPaths
+        ..clear()
+        ..addAll(_artistSamples.map((sample) => sample.file.path));
+      _selectionAnchorPath = _selected?.file.path;
+    });
+  }
+
+  void _handleThumbnailTap(SavedSample sample, int index) {
+    final keyboard = HardwareKeyboard.instance;
+    final additive = keyboard.isMetaPressed || keyboard.isControlPressed;
+    final ranged = keyboard.isShiftPressed;
+    if (!_selectionMode && !additive && !ranged) {
+      _selectSample(sample);
+      _keyboardFocus.requestFocus();
+      return;
+    }
+
+    setState(() {
+      _selectionMode = true;
+      _fitMode = true;
+      _selected = sample;
+      final anchorIndex = _artistSamples.indexWhere(
+        (item) => item.file.path == _selectionAnchorPath,
+      );
+      if (ranged && anchorIndex >= 0) {
+        final start = math.min(anchorIndex, index);
+        final end = math.max(anchorIndex, index);
+        _selectedPaths.addAll(
+          _artistSamples
+              .sublist(start, end + 1)
+              .map((item) => item.file.path),
+        );
+      } else {
+        final path = sample.file.path;
+        if (!_selectedPaths.remove(path)) _selectedPaths.add(path);
+        _selectionAnchorPath = path;
+      }
+    });
+    _keyboardFocus.requestFocus();
+    unawaited(_readSelectedImageSize());
+  }
+
+  KeyEventResult _handleKeyEvent(FocusNode _, KeyEvent event) {
+    if (event is KeyUpEvent || _searchFocused || _deleting) {
+      return KeyEventResult.ignored;
+    }
+    final key = event.logicalKey;
+    final keyboard = HardwareKeyboard.instance;
+    if ((keyboard.isMetaPressed || keyboard.isControlPressed) &&
+        key == LogicalKeyboardKey.keyA) {
+      _selectAllArtistSamples();
+      return KeyEventResult.handled;
+    }
+    if (key == LogicalKeyboardKey.escape && _selectionMode) {
+      _toggleSelectionMode();
+      return KeyEventResult.handled;
+    }
+    if (key == LogicalKeyboardKey.delete ||
+        key == LogicalKeyboardKey.backspace) {
+      unawaited(_deleteSelected());
+      return KeyEventResult.handled;
+    }
+    if (key == LogicalKeyboardKey.arrowLeft) {
+      _moveSelection(-1, showCue: true);
+      return KeyEventResult.handled;
+    }
+    if (key == LogicalKeyboardKey.arrowRight) {
+      _moveSelection(1, showCue: true);
+      return KeyEventResult.handled;
+    }
+    if (key == LogicalKeyboardKey.home && _artistSamples.isNotEmpty) {
+      _selectSample(_artistSamples.first);
+      return KeyEventResult.handled;
+    }
+    if (key == LogicalKeyboardKey.end && _artistSamples.isNotEmpty) {
+      _selectSample(_artistSamples.last);
+      return KeyEventResult.handled;
+    }
+    return KeyEventResult.ignored;
+  }
+
   Future<void> _deleteSelected() async {
     final sample = _selected;
     if (sample == null || _deleting) return;
-    final filename = sample.file.uri.pathSegments.last;
+    final targets = _selectionMode
+        ? _artistSamples
+              .where((item) => _selectedPaths.contains(item.file.path))
+              .toList()
+        : [sample];
+    if (targets.isEmpty) return;
+    final filenames = targets
+        .map((item) => item.file.uri.pathSegments.last)
+        .toList();
+    final count = targets.length;
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (dialogContext) => AlertDialog(
-        title: const Text('Delete sample?'),
+        title: Text(count == 1 ? 'Delete sample?' : 'Delete $count samples?'),
         content: Text(
-          '$filename\n\nThe PNG and its JSON metadata file will be permanently deleted.',
+          count == 1
+              ? '${filenames.first}\n\nThe PNG and its JSON metadata file will be permanently deleted.'
+              : '$count selected PNG files and their JSON metadata files will be permanently deleted.',
         ),
         actions: [
           TextButton(
@@ -175,11 +300,24 @@ class _VaultPageState extends State<VaultPage> {
     final artistsBefore = _allModelArtists;
     final modelsBefore = _models;
     setState(() => _deleting = true);
+    final deletedPaths = <String>{};
+    final failures = <Exception>[];
     try {
-      await widget.storage.deleteSample(sample);
+      for (final target in targets) {
+        try {
+          await widget.storage.deleteSample(target);
+          deletedPaths.add(target.file.path);
+        } on Exception catch (error) {
+          failures.add(error);
+        }
+      }
       if (!mounted) return;
+      if (deletedPaths.isEmpty) {
+        throw failures.first;
+      }
       _selectAfterDeletion(
         sample,
+        deletedPaths: deletedPaths,
         selectedIndex: selectedIndex,
         artistsBefore: artistsBefore,
         modelsBefore: modelsBefore,
@@ -191,7 +329,13 @@ class _VaultPageState extends State<VaultPage> {
         unawaited(_readSelectedImageSize());
       }
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Deleted $filename and its metadata.')),
+        SnackBar(
+          content: Text(
+            failures.isEmpty
+                ? 'Deleted ${deletedPaths.length} sample${deletedPaths.length == 1 ? '' : 's'} and metadata.'
+                : 'Deleted ${deletedPaths.length}; ${failures.length} could not be deleted.',
+          ),
+        ),
       );
     } on Exception catch (error) {
       if (!mounted) return;
@@ -204,58 +348,73 @@ class _VaultPageState extends State<VaultPage> {
   }
 
   void _selectAfterDeletion(
-    SavedSample deleted, {
+    SavedSample reference, {
+    required Set<String> deletedPaths,
     required int selectedIndex,
     required List<String> artistsBefore,
     required List<String> modelsBefore,
   }) {
     final remaining = _samples
-        .where((sample) => sample.file.path != deleted.file.path)
+        .where((sample) => !deletedPaths.contains(sample.file.path))
         .toList();
-    String? nextModel = deleted.modelId;
-    String? nextArtist = deleted.artist;
+    String? nextModel = reference.modelId;
+    String? nextArtist = reference.artist;
     SavedSample? nextSample;
+
+    SavedSample? preserved;
+    for (final sample in remaining) {
+      if (sample.file.path == reference.file.path) {
+        preserved = sample;
+        break;
+      }
+    }
+    if (preserved != null) nextSample = preserved;
 
     final sameArtist = remaining
         .where(
           (sample) =>
-              sample.modelId == deleted.modelId &&
-              sample.artist == deleted.artist,
+              sample.modelId == reference.modelId &&
+              sample.artist == reference.artist,
         )
         .toList();
-    if (sameArtist.isNotEmpty) {
-      nextSample = sameArtist[math.min(selectedIndex, sameArtist.length - 1)];
-    } else {
-      final sameModel = remaining
-          .where((sample) => sample.modelId == deleted.modelId)
-          .toList();
-      if (sameModel.isNotEmpty) {
-        nextArtist = _adjacentValue(
-          current: deleted.artist,
-          previousOrder: artistsBefore,
-          remaining: sameModel.map((sample) => sample.artist).toSet(),
-        );
-        nextSample = sameModel.firstWhere(
-          (sample) => sample.artist == nextArtist,
-        );
-      } else if (remaining.isNotEmpty) {
-        nextModel = _adjacentValue(
-          current: deleted.modelId,
-          previousOrder: modelsBefore,
-          remaining: remaining.map((sample) => sample.modelId).toSet(),
-        );
-        nextSample = remaining.firstWhere(
-          (sample) => sample.modelId == nextModel,
-        );
-        nextArtist = nextSample.artist;
+    if (nextSample == null) {
+      if (sameArtist.isNotEmpty) {
+        nextSample = sameArtist[math.min(selectedIndex, sameArtist.length - 1)];
       } else {
-        nextModel = null;
-        nextArtist = null;
+        final sameModel = remaining
+            .where((sample) => sample.modelId == reference.modelId)
+            .toList();
+        if (sameModel.isNotEmpty) {
+          nextArtist = _adjacentValue(
+            current: reference.artist,
+            previousOrder: artistsBefore,
+            remaining: sameModel.map((sample) => sample.artist).toSet(),
+          );
+          nextSample = sameModel.firstWhere(
+            (sample) => sample.artist == nextArtist,
+          );
+        } else if (remaining.isNotEmpty) {
+          nextModel = _adjacentValue(
+            current: reference.modelId,
+            previousOrder: modelsBefore,
+            remaining: remaining.map((sample) => sample.modelId).toSet(),
+          );
+          nextSample = remaining.firstWhere(
+            (sample) => sample.modelId == nextModel,
+          );
+          nextArtist = nextSample.artist;
+        } else {
+          nextModel = null;
+          nextArtist = null;
+        }
       }
     }
 
     setState(() {
       _samples = remaining;
+      _selectionMode = false;
+      _selectedPaths.clear();
+      _selectionAnchorPath = null;
       _modelId = nextModel;
       _artist = nextArtist;
       _selected = nextSample;
@@ -504,33 +663,38 @@ class _VaultPageState extends State<VaultPage> {
       );
     }
 
-    return LayoutBuilder(
-      builder: (context, constraints) {
-        final compact = constraints.maxWidth < 720;
-        final minimumHeight = compact ? 920.0 : 460.0;
-        final contentHeight = math.max(constraints.maxHeight, minimumHeight);
-        return Scrollbar(
-          controller: _pageScroll,
-          thumbVisibility: constraints.maxHeight < minimumHeight,
-          child: SingleChildScrollView(
+    return Focus(
+      focusNode: _keyboardFocus,
+      autofocus: true,
+      onKeyEvent: _handleKeyEvent,
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final compact = constraints.maxWidth < 720;
+          final minimumHeight = compact ? 920.0 : 460.0;
+          final contentHeight = math.max(constraints.maxHeight, minimumHeight);
+          return Scrollbar(
             controller: _pageScroll,
-            padding: const EdgeInsets.only(right: 10),
-            child: SizedBox(
-              height: contentHeight,
-              child: compact
-                  ? Column(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [
-                        SizedBox(height: 330, child: _buildCatalog()),
-                        const SizedBox(height: 16),
-                        Expanded(child: _buildViewer(wideInfo: false)),
-                      ],
-                    )
-                  : _buildWideVault(constraints.maxWidth),
+            thumbVisibility: constraints.maxHeight < minimumHeight,
+            child: SingleChildScrollView(
+              controller: _pageScroll,
+              padding: const EdgeInsets.only(right: 10),
+              child: SizedBox(
+                height: contentHeight,
+                child: compact
+                    ? Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          SizedBox(height: 330, child: _buildCatalog()),
+                          const SizedBox(height: 16),
+                          Expanded(child: _buildViewer(wideInfo: false)),
+                        ],
+                      )
+                    : _buildWideVault(constraints.maxWidth),
+              ),
             ),
-          ),
-        );
-      },
+          );
+        },
+      ),
     );
   }
 
@@ -585,11 +749,14 @@ class _VaultPageState extends State<VaultPage> {
             onChanged: _selectModel,
           ),
           const SizedBox(height: 10),
-          TextField(
-            controller: _search,
-            decoration: const InputDecoration(
-              labelText: 'Artist search',
-              prefixIcon: Icon(Icons.search_rounded),
+          Focus(
+            onFocusChange: (focused) => _searchFocused = focused,
+            child: TextField(
+              controller: _search,
+              decoration: const InputDecoration(
+                labelText: 'Artist search',
+                prefixIcon: Icon(Icons.search_rounded),
+              ),
             ),
           ),
           const SizedBox(height: 10),
@@ -638,9 +805,25 @@ class _VaultPageState extends State<VaultPage> {
               const SizedBox(width: 8),
               Expanded(
                 child: Text(
-                  sample?.artist ?? 'IMAGE',
+                  _selectionMode
+                      ? '${_selectedPaths.length} selected'
+                      : sample?.artist ?? 'IMAGE',
                   overflow: TextOverflow.ellipsis,
                   style: _sectionStyle,
+                ),
+              ),
+              IconButton(
+                tooltip: _selectionMode
+                    ? 'Cancel multiple selection (Esc)'
+                    : 'Select multiple images',
+                onPressed: sample == null ? null : _toggleSelectionMode,
+                color: _selectionMode
+                    ? Theme.of(context).colorScheme.primary
+                    : null,
+                icon: Icon(
+                  _selectionMode
+                      ? Icons.library_add_check_rounded
+                      : Icons.library_add_outlined,
                 ),
               ),
               if (_deleting)
@@ -653,8 +836,14 @@ class _VaultPageState extends State<VaultPage> {
                 )
               else
                 IconButton(
-                  tooltip: 'Delete image and metadata',
-                  onPressed: sample == null ? null : _deleteSelected,
+                  tooltip: _selectionMode
+                      ? 'Delete selected images and metadata'
+                      : 'Delete image and metadata',
+                  onPressed:
+                      sample == null ||
+                          (_selectionMode && _selectedPaths.isEmpty)
+                      ? null
+                      : _deleteSelected,
                   color: Colors.redAccent,
                   icon: const Icon(Icons.delete_outline_rounded),
                 ),
@@ -710,6 +899,7 @@ class _VaultPageState extends State<VaultPage> {
                               onScaleStart: _startImageGesture,
                               onScaleUpdate: _updateImageGesture,
                               onScaleEnd: _endImageGesture,
+                              onTap: _keyboardFocus.requestFocus,
                               child: Stack(
                                 fit: StackFit.expand,
                                 children: [
@@ -768,21 +958,48 @@ class _VaultPageState extends State<VaultPage> {
                 separatorBuilder: (_, __) => const SizedBox(width: 8),
                 itemBuilder: (context, index) {
                   final item = _artistSamples[index];
+                  final selected = _selectedPaths.contains(item.file.path);
                   return InkWell(
-                    onTap: () => _selectSample(item),
-                    child: Container(
+                    onTap: () => _handleThumbnailTap(item, index),
+                    child: SizedBox(
                       width: 64,
-                      decoration: BoxDecoration(
-                        borderRadius: BorderRadius.circular(9),
-                        border: Border.all(
-                          color: item == sample
-                              ? Theme.of(context).colorScheme.primary
-                              : Colors.white12,
-                          width: item == sample ? 2 : 1,
-                        ),
+                      child: Stack(
+                        fit: StackFit.expand,
+                        children: [
+                          Container(
+                            decoration: BoxDecoration(
+                              borderRadius: BorderRadius.circular(9),
+                              border: Border.all(
+                                color: selected || item == sample
+                                    ? Theme.of(context).colorScheme.primary
+                                    : Colors.white12,
+                                width: selected || item == sample ? 2 : 1,
+                              ),
+                            ),
+                            clipBehavior: Clip.antiAlias,
+                            child: Image.file(item.file, fit: BoxFit.cover),
+                          ),
+                          if (selected)
+                            Positioned(
+                              top: 5,
+                              right: 5,
+                              child: DecoratedBox(
+                                decoration: BoxDecoration(
+                                  color: Theme.of(context).colorScheme.primary,
+                                  shape: BoxShape.circle,
+                                ),
+                                child: const Padding(
+                                  padding: EdgeInsets.all(3),
+                                  child: Icon(
+                                    Icons.check_rounded,
+                                    size: 14,
+                                    color: Colors.white,
+                                  ),
+                                ),
+                              ),
+                            ),
+                        ],
                       ),
-                      clipBehavior: Clip.antiAlias,
-                      child: Image.file(item.file, fit: BoxFit.cover),
                     ),
                   );
                 },
