@@ -11,12 +11,16 @@ import 'package:url_launcher/url_launcher.dart';
 
 /// Saves and scans the model/artist folder hierarchy used by Vault.
 class SampleStorage {
-  SampleStorage({PngMetadataReader? metadataReader})
-    : _metadataReader = metadataReader ?? const PngMetadataReader();
+  SampleStorage({PngMetadataReader? metadataReader, Directory? rootDirectory})
+    : _metadataReader = metadataReader ?? const PngMetadataReader(),
+      _rootDirectoryOverride = rootDirectory;
 
   final PngMetadataReader _metadataReader;
+  final Directory? _rootDirectoryOverride;
 
   Future<Directory> rootDirectory() async {
+    final override = _rootDirectoryOverride;
+    if (override != null) return override;
     final documents = await getApplicationDocumentsDirectory();
     return Directory(path.join(documents.path, 'ArtistTagVault', 'samples'));
   }
@@ -123,6 +127,49 @@ class SampleStorage {
     final opened = await launchUrl(Uri.file(file.parent.path));
     if (!opened) {
       throw FileSystemException('이미지 폴더를 열 수 없습니다.', file.path);
+    }
+  }
+
+  /// Permanently deletes a sample PNG and its same-name JSON sidecar.
+  Future<void> deleteSample(SavedSample sample) async {
+    final root = await rootDirectory();
+    final rootPath = path.normalize(path.absolute(root.path));
+    final imagePath = path.normalize(path.absolute(sample.file.path));
+    if (!path.isWithin(rootPath, imagePath) ||
+        path.extension(imagePath).toLowerCase() != '.png') {
+      throw FileSystemException(
+        'Vault 저장 폴더 밖의 파일은 삭제할 수 없습니다.',
+        sample.file.path,
+      );
+    }
+
+    final image = File(imagePath);
+    final sidecar = File(path.setExtension(imagePath, '.json'));
+    final failures = <String>[];
+    for (final file in [image, sidecar]) {
+      try {
+        if (await file.exists()) await file.delete();
+      } on FileSystemException catch (error) {
+        failures.add('${path.basename(file.path)}: ${error.message}');
+      }
+    }
+    if (failures.isNotEmpty) {
+      throw FileSystemException(
+        '샘플 파일을 완전히 삭제하지 못했습니다: ${failures.join(', ')}',
+        imagePath,
+      );
+    }
+
+    await _deleteEmptyParents(image.parent, root);
+  }
+
+  Future<void> _deleteEmptyParents(Directory directory, Directory root) async {
+    final rootPath = path.normalize(path.absolute(root.path));
+    var current = directory;
+    while (path.isWithin(rootPath, path.normalize(path.absolute(current.path)))) {
+      if (!await current.exists() || !await current.list().isEmpty) return;
+      await current.delete();
+      current = current.parent;
     }
   }
 

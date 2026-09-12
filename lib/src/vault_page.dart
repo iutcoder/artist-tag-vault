@@ -27,6 +27,7 @@ class _VaultPageState extends State<VaultPage> {
   final _transform = TransformationController();
   List<SavedSample> _samples = const [];
   bool _loading = true;
+  bool _deleting = false;
   bool _showInfo = false;
   String? _modelId;
   String? _artist;
@@ -91,17 +92,19 @@ class _VaultPageState extends State<VaultPage> {
       .where((sample) => _modelId == null || sample.modelId == _modelId)
       .toList();
 
+  List<String> get _allModelArtists {
+    final artists = _modelSamples.map((sample) => sample.artist).toSet().toList();
+    artists.sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
+    return artists;
+  }
+
   List<String> get _artists {
     final query = _search.text.trim().toLowerCase();
-    final artists = _modelSamples
-        .map((sample) => sample.artist)
+    return _allModelArtists
         .where(
           (artist) => query.isEmpty || artist.toLowerCase().contains(query),
         )
-        .toSet()
         .toList();
-    artists.sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
-    return artists;
   }
 
   List<SavedSample> get _artistSamples => _modelSamples
@@ -128,6 +131,144 @@ class _VaultPageState extends State<VaultPage> {
   void _selectSample(SavedSample sample) {
     setState(() => _selected = sample);
     unawaited(_readSelectedImageSize());
+  }
+
+  Future<void> _deleteSelected() async {
+    final sample = _selected;
+    if (sample == null || _deleting) return;
+    final filename = sample.file.uri.pathSegments.last;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Delete sample?'),
+        content: Text(
+          '$filename\n\nThe PNG and its JSON metadata file will be permanently deleted.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton.icon(
+            style: FilledButton.styleFrom(
+              backgroundColor: Theme.of(dialogContext).colorScheme.error,
+              foregroundColor: Theme.of(dialogContext).colorScheme.onError,
+            ),
+            onPressed: () => Navigator.pop(dialogContext, true),
+            icon: const Icon(Icons.delete_forever_rounded),
+            label: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+
+    final selectedIndex = _artistSamples.indexOf(sample);
+    final artistsBefore = _allModelArtists;
+    final modelsBefore = _models;
+    setState(() => _deleting = true);
+    try {
+      await widget.storage.deleteSample(sample);
+      if (!mounted) return;
+      _selectAfterDeletion(
+        sample,
+        selectedIndex: selectedIndex,
+        artistsBefore: artistsBefore,
+        modelsBefore: modelsBefore,
+      );
+      if (_selected == null) {
+        _imageSize = null;
+        _transform.value = Matrix4.identity();
+      } else {
+        unawaited(_readSelectedImageSize());
+      }
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Deleted $filename and its metadata.')),
+      );
+    } on Exception catch (error) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('Could not delete sample: $error')),
+      );
+    } finally {
+      if (mounted) setState(() => _deleting = false);
+    }
+  }
+
+  void _selectAfterDeletion(
+    SavedSample deleted, {
+    required int selectedIndex,
+    required List<String> artistsBefore,
+    required List<String> modelsBefore,
+  }) {
+    final remaining = _samples
+        .where((sample) => sample.file.path != deleted.file.path)
+        .toList();
+    String? nextModel = deleted.modelId;
+    String? nextArtist = deleted.artist;
+    SavedSample? nextSample;
+
+    final sameArtist = remaining
+        .where(
+          (sample) =>
+              sample.modelId == deleted.modelId &&
+              sample.artist == deleted.artist,
+        )
+        .toList();
+    if (sameArtist.isNotEmpty) {
+      nextSample = sameArtist[math.min(selectedIndex, sameArtist.length - 1)];
+    } else {
+      final sameModel = remaining
+          .where((sample) => sample.modelId == deleted.modelId)
+          .toList();
+      if (sameModel.isNotEmpty) {
+        nextArtist = _adjacentValue(
+          current: deleted.artist,
+          previousOrder: artistsBefore,
+          remaining: sameModel.map((sample) => sample.artist).toSet(),
+        );
+        nextSample = sameModel.firstWhere(
+          (sample) => sample.artist == nextArtist,
+        );
+      } else if (remaining.isNotEmpty) {
+        nextModel = _adjacentValue(
+          current: deleted.modelId,
+          previousOrder: modelsBefore,
+          remaining: remaining.map((sample) => sample.modelId).toSet(),
+        );
+        nextSample = remaining.firstWhere(
+          (sample) => sample.modelId == nextModel,
+        );
+        nextArtist = nextSample.artist;
+      } else {
+        nextModel = null;
+        nextArtist = null;
+      }
+    }
+
+    setState(() {
+      _samples = remaining;
+      _modelId = nextModel;
+      _artist = nextArtist;
+      _selected = nextSample;
+    });
+  }
+
+  String _adjacentValue({
+    required String current,
+    required List<String> previousOrder,
+    required Set<String> remaining,
+  }) {
+    final index = previousOrder.indexOf(current);
+    if (index >= 0) {
+      for (var i = index + 1; i < previousOrder.length; i++) {
+        if (remaining.contains(previousOrder[i])) return previousOrder[i];
+      }
+      for (var i = index - 1; i >= 0; i--) {
+        if (remaining.contains(previousOrder[i])) return previousOrder[i];
+      }
+    }
+    return remaining.first;
   }
 
   bool _moveSelection(int delta, {bool showCue = false}) {
@@ -486,6 +627,21 @@ class _VaultPageState extends State<VaultPage> {
                   style: _sectionStyle,
                 ),
               ),
+              if (_deleting)
+                const Padding(
+                  padding: EdgeInsets.all(12),
+                  child: SizedBox.square(
+                    dimension: 18,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  ),
+                )
+              else
+                IconButton(
+                  tooltip: 'Delete image and metadata',
+                  onPressed: sample == null ? null : _deleteSelected,
+                  color: Colors.redAccent,
+                  icon: const Icon(Icons.delete_outline_rounded),
+                ),
               IconButton(
                 tooltip: 'Generation info',
                 onPressed: sample == null
