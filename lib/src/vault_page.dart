@@ -5,6 +5,7 @@ import 'dart:ui' as ui;
 import 'package:artist_tag_vault/src/models/saved_sample.dart';
 import 'package:artist_tag_vault/src/services/sample_storage.dart';
 import 'package:artist_tag_vault/src/widgets/glass_panel.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
@@ -35,13 +36,14 @@ class _VaultPageState extends State<VaultPage> {
   Size? _imageSize;
   Size? _viewerSize;
   String? _error;
-  bool _imageAtFit = true;
+  bool _fitMode = true;
   Matrix4? _gestureStartTransform;
   Offset? _gestureStartScenePoint;
   Offset _gestureDistance = Offset.zero;
   double _gestureStartScale = 1;
-  bool _gestureStartedAtFit = false;
-  bool _gestureScaled = false;
+  double _wheelDistance = 0;
+  bool _wheelNavigationHandled = false;
+  Timer? _wheelResetTimer;
   int? _navigationCue;
   Timer? _navigationCueTimer;
 
@@ -49,15 +51,14 @@ class _VaultPageState extends State<VaultPage> {
   void initState() {
     super.initState();
     _search.addListener(() => setState(() {}));
-    _transform.addListener(_handleTransformChanged);
     _reload();
   }
 
   @override
   void dispose() {
     _search.dispose();
-    _transform.removeListener(_handleTransformChanged);
     _transform.dispose();
+    _wheelResetTimer?.cancel();
     _navigationCueTimer?.cancel();
     super.dispose();
   }
@@ -113,6 +114,7 @@ class _VaultPageState extends State<VaultPage> {
 
   void _selectModel(String? value) {
     setState(() {
+      _fitMode = true;
       _modelId = value;
       _artist = _modelSamples.isEmpty ? null : _modelSamples.first.artist;
       _selected = _artistSamples.isEmpty ? null : _artistSamples.first;
@@ -122,6 +124,7 @@ class _VaultPageState extends State<VaultPage> {
 
   void _selectArtist(String artist) {
     setState(() {
+      _fitMode = true;
       _artist = artist;
       _selected = _artistSamples.isEmpty ? null : _artistSamples.first;
     });
@@ -129,7 +132,10 @@ class _VaultPageState extends State<VaultPage> {
   }
 
   void _selectSample(SavedSample sample) {
-    setState(() => _selected = sample);
+    setState(() {
+      _fitMode = true;
+      _selected = sample;
+    });
     unawaited(_readSelectedImageSize());
   }
 
@@ -282,17 +288,23 @@ class _VaultPageState extends State<VaultPage> {
     return true;
   }
 
-  bool get _canSwipeImages {
-    return _imageAtFit && _artistSamples.length > 1;
-  }
+  void _handlePointerSignal(PointerSignalEvent event) {
+    if (event is! PointerScrollEvent || _artistSamples.length < 2) return;
+    final delta = event.scrollDelta.dy;
+    if (delta == 0) return;
 
-  void _finishImageSwipe(Offset distance) {
-    final isHorizontalPageSwipe =
-        distance.dx.abs() >= 56 && distance.dx.abs() > distance.dy.abs() * 1.2;
-    if (!isHorizontalPageSwipe) {
-      return;
-    }
-    _moveSelection(distance.dx < 0 ? 1 : -1, showCue: true);
+    _wheelResetTimer?.cancel();
+    _wheelResetTimer = Timer(const Duration(milliseconds: 220), () {
+      _wheelDistance = 0;
+      _wheelNavigationHandled = false;
+    });
+    if (_wheelNavigationHandled) return;
+
+    _wheelDistance += delta;
+    if (_wheelDistance.abs() < 12) return;
+    _wheelNavigationHandled = true;
+    _wheelDistance = 0;
+    _moveSelection(delta > 0 ? 1 : -1, showCue: true);
   }
 
   void _startImageGesture(ScaleStartDetails details) {
@@ -300,8 +312,6 @@ class _VaultPageState extends State<VaultPage> {
     _gestureStartScenePoint = _transform.toScene(details.localFocalPoint);
     _gestureDistance = Offset.zero;
     _gestureStartScale = _transform.value.getMaxScaleOnAxis();
-    _gestureStartedAtFit = _imageAtFit;
-    _gestureScaled = false;
   }
 
   void _updateImageGesture(ScaleUpdateDetails details) {
@@ -311,11 +321,9 @@ class _VaultPageState extends State<VaultPage> {
     _gestureDistance += details.focalPointDelta;
 
     final scaling =
-        _gestureScaled ||
-        (details.scale - 1).abs() > .001 ||
-        details.pointerCount > 1;
+        (details.scale - 1).abs() > .001 || details.pointerCount > 1;
     if (scaling) {
-      _gestureScaled = true;
+      _fitMode = false;
       final minimumScale = _minimumScale;
       final scale = (_gestureStartScale * details.scale)
           .clamp(minimumScale, 8.0)
@@ -329,9 +337,8 @@ class _VaultPageState extends State<VaultPage> {
       return;
     }
 
-    // At Fit, a drag belongs exclusively to page navigation. The image
-    // transform must remain unchanged while the swipe is being measured.
-    if (_gestureStartedAtFit || !_canPanAtScale(_gestureStartScale)) return;
+    // Fit is anchored to the viewer. Dragging only pans an enlarged image.
+    if (_fitMode || !_canPanAtScale(_gestureStartScale)) return;
 
     final image = _imageSize!;
     final viewer = _viewerSize!;
@@ -351,34 +358,10 @@ class _VaultPageState extends State<VaultPage> {
   }
 
   void _endImageGesture(ScaleEndDetails _) {
-    if (_gestureStartedAtFit && !_gestureScaled && _canSwipeImages) {
-      _finishImageSwipe(_gestureDistance);
-    } else {
-      _constrainImagePosition();
-    }
+    _constrainImagePosition();
     _gestureStartTransform = null;
     _gestureStartScenePoint = null;
     _gestureDistance = Offset.zero;
-  }
-
-  void _handleTransformChanged() {
-    final atFit = _matchesFitTransform();
-    if (!mounted || atFit == _imageAtFit) return;
-    setState(() => _imageAtFit = atFit);
-  }
-
-  bool _matchesFitTransform() {
-    final image = _imageSize;
-    final viewer = _viewerSize;
-    if (image == null || viewer == null) return true;
-    final scale = _fitScale;
-    final x = (viewer.width - image.width * scale) / 2;
-    final y = (viewer.height - image.height * scale) / 2;
-    final matrix = _transform.value;
-    final scaleTolerance = math.max(.001, scale * .005);
-    return (matrix.getMaxScaleOnAxis() - scale).abs() <= scaleTolerance &&
-        (matrix.entry(0, 3) - x).abs() <= .5 &&
-        (matrix.entry(1, 3) - y).abs() <= .5;
   }
 
   double get _fitScale {
@@ -426,11 +409,10 @@ class _VaultPageState extends State<VaultPage> {
 
   void _updateViewerSize(Size size) {
     if (_viewerSize == size) return;
-    final refit = _imageAtFit;
     _viewerSize = size;
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted || _viewerSize != size) return;
-      if (refit) {
+      if (_fitMode) {
         _fit();
       } else {
         _constrainImagePosition();
@@ -472,6 +454,7 @@ class _VaultPageState extends State<VaultPage> {
   }
 
   void _fit() {
+    _fitMode = true;
     final image = _imageSize;
     final viewer = _viewerSize;
     if (image == null || viewer == null) {
@@ -481,7 +464,10 @@ class _VaultPageState extends State<VaultPage> {
     _setScale(_fitScale);
   }
 
-  void _oneToOne() => _setScale(1);
+  void _oneToOne() {
+    _fitMode = false;
+    _setScale(1);
+  }
 
   void _setScale(double scale) {
     final image = _imageSize;
@@ -497,6 +483,7 @@ class _VaultPageState extends State<VaultPage> {
   }
 
   void _zoom(double factor) {
+    _fitMode = false;
     final current = _transform.value.getMaxScaleOnAxis();
     final next = (current * factor).clamp(_minimumScale, 8.0);
     _setScale(next.toDouble());
@@ -685,48 +672,54 @@ class _VaultPageState extends State<VaultPage> {
                               style: TextStyle(color: Colors.white38),
                             ),
                           )
-                        : GestureDetector(
+                        : Listener(
                             behavior: HitTestBehavior.opaque,
-                            trackpadScrollCausesScale: false,
-                            onScaleStart: _startImageGesture,
-                            onScaleUpdate: _updateImageGesture,
-                            onScaleEnd: _endImageGesture,
-                            child: Stack(
-                              fit: StackFit.expand,
-                              children: [
-                                Positioned(
-                                  left: 0,
-                                  top: 0,
-                                  width: _imageSize?.width ?? 0,
-                                  height: _imageSize?.height ?? 0,
-                                  child: AnimatedBuilder(
-                                    animation: _transform,
-                                    builder: (context, child) => Transform(
-                                      transform: _transform.value,
-                                      alignment: Alignment.topLeft,
-                                      child: child,
-                                    ),
-                                    child: Image.file(
-                                      sample.file,
-                                      fit: BoxFit.fill,
+                            onPointerSignal: _handlePointerSignal,
+                            child: GestureDetector(
+                              behavior: HitTestBehavior.opaque,
+                              trackpadScrollCausesScale: false,
+                              onScaleStart: _startImageGesture,
+                              onScaleUpdate: _updateImageGesture,
+                              onScaleEnd: _endImageGesture,
+                              child: Stack(
+                                fit: StackFit.expand,
+                                children: [
+                                  Positioned(
+                                    left: 0,
+                                    top: 0,
+                                    width: _imageSize?.width ?? 0,
+                                    height: _imageSize?.height ?? 0,
+                                    child: AnimatedBuilder(
+                                      animation: _transform,
+                                      builder: (context, child) => Transform(
+                                        transform: _transform.value,
+                                        alignment: Alignment.topLeft,
+                                        child: child,
+                                      ),
+                                      child: Image.file(
+                                        sample.file,
+                                        fit: BoxFit.fill,
+                                      ),
                                     ),
                                   ),
-                                ),
-                                IgnorePointer(
-                                  child: AnimatedSwitcher(
-                                    duration: const Duration(milliseconds: 160),
-                                    reverseDuration: const Duration(
-                                      milliseconds: 220,
+                                  IgnorePointer(
+                                    child: AnimatedSwitcher(
+                                      duration: const Duration(
+                                        milliseconds: 160,
+                                      ),
+                                      reverseDuration: const Duration(
+                                        milliseconds: 220,
+                                      ),
+                                      child: _navigationCue == null
+                                          ? const SizedBox.shrink()
+                                          : _NavigationCue(
+                                              key: ValueKey(_navigationCue),
+                                              direction: _navigationCue!,
+                                            ),
                                     ),
-                                    child: _navigationCue == null
-                                        ? const SizedBox.shrink()
-                                        : _NavigationCue(
-                                            key: ValueKey(_navigationCue),
-                                            direction: _navigationCue!,
-                                          ),
                                   ),
-                                ),
-                              ],
+                                ],
+                              ),
                             ),
                           ),
                   ),
