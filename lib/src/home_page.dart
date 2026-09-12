@@ -743,7 +743,8 @@ class _HomePageState extends State<HomePage> {
                   shrinkWrap: true,
                   buildDefaultDragHandles: false,
                   itemCount: _customArtists.length,
-                  onReorderItem: _busy ? null : _reorderCustomArtist,
+                  // ignore: deprecated_member_use
+                  onReorder: _busy ? (_, __) {} : _reorderCustomArtist,
                   itemBuilder: (context, index) {
                     final artist = _customArtists[index];
                     return ListTile(
@@ -816,6 +817,7 @@ class _HomePageState extends State<HomePage> {
 
   void _reorderCustomArtist(int oldIndex, int newIndex) {
     setState(() {
+      if (newIndex > oldIndex) newIndex--;
       final artist = _customArtists.removeAt(oldIndex);
       _customArtists.insert(newIndex, artist);
     });
@@ -1285,14 +1287,12 @@ class _CustomArtistDialogState extends State<_CustomArtistDialog> {
   late final TextEditingController _controller;
   final _focusNode = FocusNode();
   late double _weight;
-  late bool _fixed;
 
   @override
   void initState() {
     super.initState();
     _controller = TextEditingController(text: widget.initialValue?.name ?? '');
     _weight = widget.initialValue?.weight ?? 1;
-    _fixed = widget.initialValue?.fixed ?? false;
   }
 
   @override
@@ -1306,7 +1306,11 @@ class _CustomArtistDialogState extends State<_CustomArtistDialog> {
     final name = _controller.text.trim();
     if (name.isEmpty) return;
     Navigator.of(context).pop(
-      CustomArtist(name: name, weight: _weight, fixed: _fixed),
+      CustomArtist(
+        name: name,
+        weight: _weight,
+        fixed: widget.initialValue?.fixed ?? false,
+      ),
     );
   }
 
@@ -1336,16 +1340,6 @@ class _CustomArtistDialogState extends State<_CustomArtistDialog> {
               decimalPlaces: 2,
               labelText: 'Weight',
               onChanged: (value) => setState(() => _weight = value),
-            ),
-            CheckboxListTile(
-              contentPadding: EdgeInsets.zero,
-              title: const Text('Fixed position and weight'),
-              subtitle: const Text(
-                'Excluded from both random options.',
-                style: TextStyle(fontSize: 11),
-              ),
-              value: _fixed,
-              onChanged: (value) => setState(() => _fixed = value ?? false),
             ),
           ],
         ),
