@@ -1160,7 +1160,7 @@ class _UsageCard extends StatelessWidget {
             right: 0,
             bottom: 0,
             child: LinearProgressIndicator(
-              value: ((percent ?? 0).clamp(0, 100) / 100).toDouble(),
+              value: (percent.clamp(0, 100) / 100).toDouble(),
               minHeight: 4,
               color: usage?.v5Unavailable == true
                   ? Colors.redAccent
