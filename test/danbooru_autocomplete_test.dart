@@ -135,6 +135,85 @@ void main() {
     expect(status.artistCount, 1);
   });
 
+  test('checkpoints a failed download and resumes from its cursor', () async {
+    final temporary = await Directory.systemTemp.createTemp(
+      'artist-tag-vault-resume-dictionary-',
+    );
+    addTearDown(() async => temporary.delete(recursive: true));
+    final dictionary = File(path.join(temporary.path, 'artists.json'));
+    var failedOnce = false;
+    final requestedPages = <String>[];
+    final service = DanbooruAutocompleteService(
+      client: MockClient((request) async {
+        final page = request.url.queryParameters['page']!;
+        requestedPages.add(page);
+        if (page == '1') {
+          return http.Response(
+            '[{"id":30,"name":"artist_a","post_count":3,"category":1},'
+            '{"id":20,"name":"artist_b","post_count":2,"category":1}]',
+            200,
+          );
+        }
+        if (!failedOnce) {
+          failedOnce = true;
+          return http.Response('temporarily unavailable', 503);
+        }
+        return http.Response(
+          '[{"id":10,"name":"artist_c","post_count":1,"category":1}]',
+          200,
+        );
+      }),
+      dictionaryFile: () async => dictionary,
+      pageSize: 2,
+      pageDelay: Duration.zero,
+      maxRequestAttempts: 1,
+    );
+
+    await expectLater(
+      service.updateDictionary(),
+      throwsA(
+        isA<DanbooruAutocompleteException>().having(
+          (error) => error.message,
+          'message',
+          contains('2 artists were checkpointed'),
+        ),
+      ),
+    );
+    expect(await File('${dictionary.path}.partial').exists(), isTrue);
+
+    final status = await service.updateDictionary();
+
+    expect(requestedPages, ['1', 'b20', 'b20']);
+    expect(status.artistCount, 3);
+    expect(await File('${dictionary.path}.partial').exists(), isFalse);
+  });
+
+  test('rejects an endpoint that ignores the artist category filter', () async {
+    final temporary = await Directory.systemTemp.createTemp(
+      'artist-tag-vault-category-filter-',
+    );
+    addTearDown(() async => temporary.delete(recursive: true));
+    final service = DanbooruAutocompleteService(
+      client: MockClient(
+        (request) async => http.Response(
+          '[{"id":2,"name":"artist","post_count":1,"category":1},'
+          '{"id":1,"name":"1girl","post_count":100,"category":0}]',
+          200,
+        ),
+      ),
+      dictionaryFile: () async => File(
+        path.join(temporary.path, 'artists.json'),
+      ),
+      pageDelay: Duration.zero,
+      maxRequestAttempts: 1,
+    );
+
+    await expectLater(
+      service.updateDictionary(),
+      throwsA(isA<DanbooruAutocompleteException>()),
+    );
+  });
+
   test('filters empty, deprecated, and redirected online artist tags', () async {
     final temporary = await Directory.systemTemp.createTemp(
       'artist-tag-vault-filter-dictionary-',

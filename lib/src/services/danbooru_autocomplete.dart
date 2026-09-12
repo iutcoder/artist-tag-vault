@@ -50,7 +50,7 @@ class DanbooruAutocompleteService {
     Future<File> Function()? dictionaryFile,
     int pageSize = 500,
     Duration pageDelay = const Duration(milliseconds: 500),
-    int maxRequestAttempts = 3,
+    int maxRequestAttempts = 5,
     Duration retryDelay = const Duration(seconds: 1),
   }) : _client = client ?? http.Client(),
        _ownsClient = client == null,
@@ -119,10 +119,19 @@ class DanbooruAutocompleteService {
     }
     _updating = true;
     final operation = ++_operationGeneration;
+    final downloaded = <String, DanbooruArtistSuggestion>{};
+    var cursor = '1';
     try {
-      final downloaded = <String, DanbooruArtistSuggestion>{};
-      var cursor = '1';
+      final checkpoint = await _loadCheckpoint();
+      if (checkpoint != null) {
+        downloaded.addEntries(
+          checkpoint.artists.map((artist) => MapEntry(artist.value, artist)),
+        );
+        cursor = checkpoint.nextCursor;
+        onProgress?.call(downloaded.length);
+      }
       final visitedCursors = <String>{};
+      var pagesSinceCheckpoint = 0;
       while (visitedCursors.add(cursor)) {
         _ensureActive(operation);
         final page = await _downloadPage(cursor);
@@ -131,15 +140,29 @@ class DanbooruAutocompleteService {
           downloaded[entry.value] = entry;
         }
         onProgress?.call(downloaded.length);
-        if (page.recordCount < _pageSize || page.lastId == null) break;
+        final lastId = page.lastId;
+        if (page.recordCount < _pageSize || lastId == null) break;
         if (_pageDelay > Duration.zero) await Future<void>.delayed(_pageDelay);
-        final nextCursor = 'b${page.lastId}';
+        final nextCursor = 'b$lastId';
+        final currentBoundary = cursor.startsWith('b')
+            ? int.tryParse(cursor.substring(1))
+            : null;
+        if (currentBoundary != null && lastId >= currentBoundary) {
+          throw const DanbooruAutocompleteException(
+            'Danbooru pagination did not move toward older artist tags.',
+          );
+        }
         if (visitedCursors.contains(nextCursor)) {
           throw const DanbooruAutocompleteException(
             'Danbooru pagination returned a repeated page.',
           );
         }
         cursor = nextCursor;
+        pagesSinceCheckpoint++;
+        if (pagesSinceCheckpoint >= 25) {
+          await _saveCheckpoint(downloaded.values, cursor);
+          pagesSinceCheckpoint = 0;
+        }
       }
       _ensureActive(operation);
       if (downloaded.isEmpty) {
@@ -156,6 +179,7 @@ class DanbooruAutocompleteService {
       final updatedAt = DateTime.now().toUtc();
       _ensureActive(operation);
       await _saveDictionary(artists, updatedAt);
+      await _deleteCheckpoint();
       _ensureActive(operation);
       _artists = List.unmodifiable(artists);
       _updatedAt = updatedAt;
@@ -163,6 +187,15 @@ class DanbooruAutocompleteService {
         artistCount: artists.length,
         updatedAt: updatedAt,
       );
+    } on DanbooruAutocompleteException catch (error) {
+      if (downloaded.isNotEmpty && _operationGeneration == operation) {
+        await _saveCheckpoint(downloaded.values, cursor);
+        throw DanbooruAutocompleteException(
+          '${error.message} ${downloaded.length} artists were checkpointed. '
+          'Press update again to resume.',
+        );
+      }
+      rethrow;
     } finally {
       if (_operationGeneration == operation) _updating = false;
     }
@@ -224,6 +257,7 @@ class DanbooruAutocompleteService {
       final updatedAt = DateTime.now().toUtc();
       _ensureActive(operation);
       await _saveDictionary(artists, updatedAt);
+      await _deleteCheckpoint();
       _ensureActive(operation);
       _artists = List.unmodifiable(artists);
       _updatedAt = updatedAt;
@@ -316,6 +350,14 @@ class DanbooruAutocompleteService {
       );
     }
     final records = decoded.whereType<Map>().toList(growable: false);
+    final containsOtherCategories = records.any(
+      (item) => int.tryParse(item['category']?.toString() ?? '') != 1,
+    );
+    if (containsOtherCategories) {
+      throw const DanbooruAutocompleteException(
+        'This Danbooru endpoint ignored the artist category filter.',
+      );
+    }
     final artists = records
         .where((item) {
           final category = int.tryParse(item['category']?.toString() ?? '');
@@ -399,6 +441,61 @@ class DanbooruAutocompleteService {
     }
   }
 
+  Future<_DictionaryCheckpoint?> _loadCheckpoint() async {
+    final file = await _checkpointFile();
+    if (!await file.exists()) return null;
+    try {
+      final decoded = jsonDecode(await file.readAsString());
+      if (decoded is! Map) return null;
+      final nextCursor = decoded['nextCursor']?.toString() ?? '';
+      final entries = decoded['artists'];
+      if (nextCursor.isEmpty || entries is! List) return null;
+      final artists = entries
+          .map(DanbooruArtistSuggestion.fromJson)
+          .whereType<DanbooruArtistSuggestion>()
+          .toList(growable: false);
+      if (artists.isEmpty) return null;
+      return _DictionaryCheckpoint(
+        artists: artists,
+        nextCursor: nextCursor,
+      );
+    } on Exception {
+      return null;
+    }
+  }
+
+  Future<void> _saveCheckpoint(
+    Iterable<DanbooruArtistSuggestion> artists,
+    String nextCursor,
+  ) async {
+    final file = await _checkpointFile();
+    await file.parent.create(recursive: true);
+    final temporary = File('${file.path}.tmp');
+    try {
+      await temporary.writeAsString(
+        jsonEncode({
+          'nextCursor': nextCursor,
+          'artists': artists.map((artist) => artist.toJson()).toList(),
+        }),
+        flush: true,
+      );
+      if (await file.exists()) await file.delete();
+      await temporary.rename(file.path);
+    } finally {
+      if (await temporary.exists()) await temporary.delete();
+    }
+  }
+
+  Future<File> _checkpointFile() async {
+    final dictionary = await _dictionaryFile();
+    return File('${dictionary.path}.partial');
+  }
+
+  Future<void> _deleteCheckpoint() async {
+    final file = await _checkpointFile();
+    if (await file.exists()) await file.delete();
+  }
+
   static Future<File> _defaultDictionaryFile() async {
     final support = await getApplicationSupportDirectory();
     return File(
@@ -437,4 +534,14 @@ class _DanbooruArtistPage {
   final List<DanbooruArtistSuggestion> artists;
   final int recordCount;
   final int? lastId;
+}
+
+class _DictionaryCheckpoint {
+  const _DictionaryCheckpoint({
+    required this.artists,
+    required this.nextCursor,
+  });
+
+  final List<DanbooruArtistSuggestion> artists;
+  final String nextCursor;
 }
