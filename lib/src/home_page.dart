@@ -99,8 +99,11 @@ class _HomePageState extends State<HomePage> {
   Future<void> _openSettings() async {
     final updated = await showDialog<AppSettings>(
       context: context,
-      builder: (context) =>
-          SettingsDialog(initialSettings: _settings, api: _api),
+      builder: (context) => SettingsDialog(
+        initialSettings: _settings,
+        api: _api,
+        artistDictionary: _danbooruAutocomplete,
+      ),
     );
     if (updated == null) return;
 

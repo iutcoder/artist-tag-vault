@@ -1,5 +1,3 @@
-import 'dart:async';
-
 import 'package:artist_tag_vault/src/services/danbooru_autocomplete.dart';
 import 'package:flutter/material.dart';
 
@@ -30,14 +28,11 @@ class DanbooruArtistField extends StatelessWidget {
         optionsBuilder: (value) async {
           final query = value.text.trim();
           if (!enabled || query.length < 2) return const [];
-          await Future<void>.delayed(const Duration(milliseconds: 300));
-          if (controller.text.trim() != query) return const [];
           try {
             final results = await service.suggestArtists(query);
             return controller.text.trim() == query ? results : const [];
           } on Exception {
-            // Autocomplete is optional. Manual entry must remain available when
-            // Danbooru is offline, rate-limited, or blocked by the network.
+            // A missing or corrupt local dictionary must not block manual entry.
             return const [];
           }
         },
@@ -77,31 +72,37 @@ class DanbooruArtistField extends StatelessWidget {
                   itemCount: values.length,
                   itemBuilder: (context, index) {
                     final suggestion = values[index];
-                    return InkWell(
-                      onTap: () => onSelected(suggestion),
-                      child: Padding(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 14,
-                          vertical: 10,
-                        ),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Text(
-                              suggestion.label,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                            Text(
-                              'artist:${suggestion.value}',
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(
-                                color: Colors.white54,
-                                fontSize: 11,
+                    final highlighted =
+                        AutocompleteHighlightedOption.of(context) == index;
+                    return ColoredBox(
+                      color: highlighted ? Colors.white10 : Colors.transparent,
+                      child: InkWell(
+                        onTap: () => onSelected(suggestion),
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 14,
+                            vertical: 10,
+                          ),
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                suggestion.label,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
                               ),
-                            ),
-                          ],
+                              Text(
+                                'artist:${suggestion.value}'
+                                '  ·  ${suggestion.count}',
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(
+                                  color: Colors.white54,
+                                  fontSize: 11,
+                                ),
+                              ),
+                            ],
+                          ),
                         ),
                       ),
                     );
