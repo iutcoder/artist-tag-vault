@@ -63,7 +63,7 @@ class SampleStorage {
         'isCustom': isCustom,
         if (!isCustom) 'artistTag': 'artist:${artist.trim()}',
         if (isCustom)
-          'customArtists': customArtists!
+          'customArtists': customArtists
               .map((artist) => artist.toJson())
               .toList(),
         if (isCustom) 'randomizeCustomOrder': randomizeCustomOrder,
