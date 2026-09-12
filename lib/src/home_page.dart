@@ -34,6 +34,7 @@ class _HomePageState extends State<HomePage> {
   final _promptController = TextEditingController();
   final _undesiredController = TextEditingController();
   final _advancedScrollController = ScrollController();
+  final _compactScrollController = ScrollController();
   final _settingsStore = SettingsStore();
   final _api = NovelAiApi();
   final _sampleStorage = SampleStorage();
@@ -45,6 +46,7 @@ class _HomePageState extends State<HomePage> {
   bool _busy = false;
   bool _previewExpanded = true;
   bool _advancedExpanded = false;
+  bool _usageExpanded = false;
   _Workspace _workspace = _Workspace.generate;
   AccountUsage? _accountUsage;
   bool _usageLoading = false;
@@ -69,6 +71,7 @@ class _HomePageState extends State<HomePage> {
     _promptController.dispose();
     _undesiredController.dispose();
     _advancedScrollController.dispose();
+    _compactScrollController.dispose();
     super.dispose();
   }
 
@@ -241,8 +244,9 @@ class _HomePageState extends State<HomePage> {
   Future<void> _savePreset() async {
     try {
       await _settingsStore.save(_settings);
-      if (mounted)
+      if (mounted) {
         setState(() => _status = 'Generation preset saved as default.');
+      }
     } on SettingsStoreException catch (error) {
       if (mounted) _showError(error.message);
     }
@@ -300,9 +304,11 @@ class _HomePageState extends State<HomePage> {
                           )
                         : LayoutBuilder(
                             builder: (context, constraints) {
-                              final compact = constraints.maxWidth < 860;
+                              final compact =
+                                  constraints.maxWidth < 860 ||
+                                  constraints.maxHeight < 620;
                               return compact
-                                  ? _buildCompactLayout()
+                                  ? _buildCompactLayout(constraints)
                                   : _buildWideLayout();
                             },
                           ),
@@ -317,23 +323,37 @@ class _HomePageState extends State<HomePage> {
   }
 
   /// Uses vertical folding for narrow windows such as the macOS screenshot.
-  Widget _buildCompactLayout() {
-    if (!_previewExpanded) {
-      return Column(
-        children: [
-          Expanded(child: _buildControls()),
-          const SizedBox(height: 14),
-          SizedBox(height: 64, child: _buildPreview(compact: true)),
-        ],
-      );
-    }
+  Widget _buildCompactLayout(BoxConstraints constraints) {
+    final advancedHeight = (constraints.maxHeight * .72).clamp(360.0, 560.0);
+    final previewHeight = _previewExpanded
+        ? (constraints.maxHeight * .62).clamp(280.0, 520.0)
+        : 64.0;
 
-    return Column(
-      children: [
-        Flexible(flex: 7, child: _buildControls()),
-        const SizedBox(height: 14),
-        Flexible(flex: 3, child: _buildPreview(compact: true)),
-      ],
+    return Scrollbar(
+      controller: _compactScrollController,
+      thumbVisibility: true,
+      child: SingleChildScrollView(
+        controller: _compactScrollController,
+        padding: const EdgeInsets.only(right: 14),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            _buildGenerateSection(),
+            const SizedBox(height: 12),
+            if (_advancedExpanded)
+              SizedBox(height: advancedHeight, child: _buildAdvanced())
+            else
+              _buildAdvanced(),
+            const SizedBox(height: 14),
+            SizedBox(
+              height: previewHeight,
+              child: _buildPreview(compact: true),
+            ),
+            const SizedBox(height: 14),
+            _buildAccountUsageSection(),
+          ],
+        ),
+      ),
     );
   }
 
@@ -527,30 +547,18 @@ class _HomePageState extends State<HomePage> {
 
   Widget _buildAccountUsageSection() {
     return GlassPanel(
-      padding: const EdgeInsets.all(12),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          _UsageCard(
-            usage: _accountUsage,
-            loading: _usageLoading,
-            error: _usageError,
-            showV5Allowance: _settings.preset.model.isV5,
-            mayConsumeAnlas: _settings.preset.exceedsNormalFreeBoundary,
-            onRefresh: _usageLoading ? null : _refreshUsage,
-          ),
-          const SizedBox(height: 8),
-          Padding(
-            padding: const EdgeInsets.symmetric(horizontal: 4),
-            child: Text(
-              _status,
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(color: Colors.white60, fontSize: 11),
-            ),
-          ),
-        ],
+      padding: EdgeInsets.zero,
+      borderRadius: 20,
+      child: _UsageCard(
+        usage: _accountUsage,
+        loading: _usageLoading,
+        error: _usageError,
+        showV5Allowance: _settings.preset.model.isV5,
+        mayConsumeAnlas: _settings.preset.exceedsNormalFreeBoundary,
+        expanded: _usageExpanded,
+        status: _status,
+        onToggle: () => setState(() => _usageExpanded = !_usageExpanded),
+        onRefresh: _usageLoading ? null : _refreshUsage,
       ),
     );
   }
@@ -620,7 +628,8 @@ class _HomePageState extends State<HomePage> {
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
                       DropdownButtonFormField<NovelAiModel>(
-                        value: preset.model,
+                        key: ValueKey(preset.model),
+                        initialValue: preset.model,
                         isExpanded: true,
                         decoration: const InputDecoration(labelText: 'Version'),
                         items: NovelAiModel.values
@@ -638,7 +647,8 @@ class _HomePageState extends State<HomePage> {
                       const SizedBox(height: 10),
                       _ResponsiveSettingPair(
                         first: DropdownButtonFormField<ImageAspectRatioPreset>(
-                          value: preset.aspectRatio,
+                          key: ValueKey(preset.aspectRatio),
+                          initialValue: preset.aspectRatio,
                           isExpanded: true,
                           decoration: const InputDecoration(
                             labelText: 'Image ratio',
@@ -664,7 +674,8 @@ class _HomePageState extends State<HomePage> {
                                 },
                         ),
                         second: DropdownButtonFormField<ImageResolutionPreset>(
-                          value: preset.resolution,
+                          key: ValueKey(preset.resolution),
+                          initialValue: preset.resolution,
                           isExpanded: true,
                           decoration: const InputDecoration(
                             labelText: 'Resolution',
@@ -739,7 +750,8 @@ class _HomePageState extends State<HomePage> {
                       ),
                       _ResponsiveSettingPair(
                         first: DropdownButtonFormField<NovelAiSampler>(
-                          value: preset.sampler,
+                          key: ValueKey(preset.sampler),
+                          initialValue: preset.sampler,
                           isExpanded: true,
                           decoration: const InputDecoration(
                             labelText: 'Sampler',
@@ -763,7 +775,8 @@ class _HomePageState extends State<HomePage> {
                                 },
                         ),
                         second: DropdownButtonFormField<NoiseSchedule>(
-                          value: preset.noiseSchedule,
+                          key: ValueKey(preset.noiseSchedule),
+                          initialValue: preset.noiseSchedule,
                           isExpanded: true,
                           decoration: const InputDecoration(
                             labelText: 'Schedule',
@@ -816,7 +829,8 @@ class _HomePageState extends State<HomePage> {
                       const SizedBox(height: 10),
                       _ResponsiveSettingPair(
                         first: DropdownButtonFormField<QualityTagPreset>(
-                          value: preset.qualityTagPreset,
+                          key: ValueKey(preset.qualityTagPreset),
+                          initialValue: preset.qualityTagPreset,
                           isExpanded: true,
                           decoration: const InputDecoration(
                             labelText: 'Automatic quality',
@@ -840,7 +854,8 @@ class _HomePageState extends State<HomePage> {
                                 },
                         ),
                         second: DropdownButtonFormField<UndesiredContentPreset>(
-                          value: preset.undesiredContentPreset,
+                          key: ValueKey(preset.undesiredContentPreset),
+                          initialValue: preset.undesiredContentPreset,
                           isExpanded: true,
                           decoration: const InputDecoration(
                             labelText: 'Negative preset',
@@ -953,6 +968,9 @@ class _UsageCard extends StatelessWidget {
     required this.error,
     required this.showV5Allowance,
     required this.mayConsumeAnlas,
+    required this.expanded,
+    required this.status,
+    required this.onToggle,
     required this.onRefresh,
   });
 
@@ -961,89 +979,183 @@ class _UsageCard extends StatelessWidget {
   final String? error;
   final bool showV5Allowance;
   final bool mayConsumeAnlas;
+  final bool expanded;
+  final String status;
+  final VoidCallback onToggle;
   final VoidCallback? onRefresh;
 
   @override
   Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.fromLTRB(4, 0, 0, 2),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Row(
-            children: [
-              const Icon(
-                Icons.bolt_rounded,
-                size: 18,
-                color: Color(0xFF68D9D0),
-              ),
-              const SizedBox(width: 7),
-              const Text(
-                'ACCOUNT USAGE',
-                style: TextStyle(
-                  fontSize: 11,
-                  letterSpacing: 1.2,
-                  fontWeight: FontWeight.w700,
-                  color: Colors.white60,
+    final percent = usage?.v5Percent;
+    final showBoundaryGauge = !expanded && showV5Allowance && percent != null;
+    final summary = usage == null
+        ? (error ?? 'Usage unavailable')
+        : '${usage!.totalAnlas} Anlas'
+              '${showV5Allowance && percent != null ? ' · V5 $percent%' : ''}';
+
+    return Stack(
+      children: [
+        Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            InkWell(
+              borderRadius: BorderRadius.circular(20),
+              onTap: onToggle,
+              child: Padding(
+                padding: EdgeInsets.fromLTRB(
+                  16,
+                  9,
+                  8,
+                  showBoundaryGauge ? 12 : 9,
+                ),
+                child: Row(
+                  children: [
+                    const Icon(
+                      Icons.bolt_rounded,
+                      size: 18,
+                      color: Color(0xFF68D9D0),
+                    ),
+                    const SizedBox(width: 7),
+                    const Text(
+                      'ACCOUNT USAGE',
+                      style: TextStyle(
+                        fontSize: 11,
+                        letterSpacing: 1.2,
+                        fontWeight: FontWeight.w700,
+                        color: Colors.white60,
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Text(
+                        loading ? 'Refreshing…' : summary,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        textAlign: TextAlign.right,
+                        style: const TextStyle(
+                          color: Colors.white70,
+                          fontSize: 11,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(width: 4),
+                    Icon(
+                      expanded
+                          ? Icons.expand_less_rounded
+                          : Icons.expand_more_rounded,
+                      color: Colors.white60,
+                    ),
+                  ],
                 ),
               ),
-              const Spacer(),
-              if (loading)
-                const Padding(
-                  padding: EdgeInsets.all(10),
-                  child: SizedBox.square(
-                    dimension: 15,
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  ),
-                )
-              else
-                IconButton(
-                  tooltip: 'Refresh usage',
-                  visualDensity: VisualDensity.compact,
-                  onPressed: onRefresh,
-                  icon: const Icon(Icons.refresh_rounded, size: 19),
+            ),
+            if (expanded)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 2, 8, 14),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Row(
+                      children: [
+                        if (usage != null)
+                          Expanded(
+                            child: Text(
+                              '${usage!.totalAnlas} Anlas · ${usage!.tierLabel}',
+                              style: const TextStyle(
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          )
+                        else
+                          const Spacer(),
+                        if (loading)
+                          const Padding(
+                            padding: EdgeInsets.all(10),
+                            child: SizedBox.square(
+                              dimension: 15,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            ),
+                          )
+                        else
+                          IconButton(
+                            tooltip: 'Refresh usage',
+                            visualDensity: VisualDensity.compact,
+                            onPressed: onRefresh,
+                            icon: const Icon(Icons.refresh_rounded, size: 19),
+                          ),
+                      ],
+                    ),
+                    if (usage != null) ...[
+                      Text(
+                        'Subscription ${usage!.subscriptionAnlas}  ·  '
+                        'Paid ${usage!.paidAnlas}',
+                        style: const TextStyle(
+                          color: Colors.white54,
+                          fontSize: 11,
+                        ),
+                      ),
+                      if (showV5Allowance) ...[
+                        const SizedBox(height: 11),
+                        _V5Allowance(usage: usage!),
+                      ],
+                    ] else
+                      Text(
+                        error ?? 'Usage has not been loaded.',
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          color: error == null
+                              ? Colors.white54
+                              : Colors.redAccent,
+                          fontSize: 11,
+                        ),
+                      ),
+                    const SizedBox(height: 9),
+                    Text(
+                      mayConsumeAnlas
+                          ? 'Large canvas or more than 28 steps may consume Anlas.'
+                          : showV5Allowance
+                          ? 'V5 uses its allowance first when generation is eligible.'
+                          : 'Charge depends on your subscription conditions.',
+                      style: TextStyle(
+                        color: mayConsumeAnlas
+                            ? Colors.amberAccent
+                            : Colors.white38,
+                        fontSize: 10,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      status,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        color: Colors.white60,
+                        fontSize: 11,
+                      ),
+                    ),
+                  ],
                 ),
-            ],
-          ),
-          if (usage != null) ...[
-            Text(
-              '${usage!.totalAnlas} Anlas · ${usage!.tierLabel}',
-              style: const TextStyle(fontWeight: FontWeight.w600),
-            ),
-            const SizedBox(height: 3),
-            Text(
-              'Subscription ${usage!.subscriptionAnlas}  ·  '
-              'Paid ${usage!.paidAnlas}',
-              style: const TextStyle(color: Colors.white54, fontSize: 11),
-            ),
-            if (showV5Allowance) ...[
-              const SizedBox(height: 11),
-              _V5Allowance(usage: usage!),
-            ],
-          ] else
-            Text(
-              error ?? 'Usage has not been loaded.',
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                color: error == null ? Colors.white54 : Colors.redAccent,
-                fontSize: 11,
               ),
-            ),
-          const SizedBox(height: 9),
-          Text(
-            mayConsumeAnlas
-                ? 'Large canvas or more than 28 steps may consume Anlas.'
-                : showV5Allowance
-                ? 'V5 uses its allowance first when generation is eligible.'
-                : 'Charge depends on your subscription conditions.',
-            style: TextStyle(
-              color: mayConsumeAnlas ? Colors.amberAccent : Colors.white38,
-              fontSize: 10,
+          ],
+        ),
+        if (showBoundaryGauge)
+          Positioned(
+            left: 0,
+            right: 0,
+            bottom: 0,
+            child: LinearProgressIndicator(
+              value: ((percent ?? 0).clamp(0, 100) / 100).toDouble(),
+              minHeight: 4,
+              color: usage?.v5Unavailable == true
+                  ? Colors.redAccent
+                  : const Color(0xFF68D9D0),
+              backgroundColor: Colors.white10,
             ),
           ),
-        ],
-      ),
+      ],
     );
   }
 }

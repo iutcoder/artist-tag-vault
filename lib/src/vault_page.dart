@@ -239,7 +239,8 @@ class _VaultPageState extends State<VaultPage> {
           ),
           const SizedBox(height: 10),
           DropdownButtonFormField<String>(
-            value: _models.contains(_modelId) ? _modelId : null,
+            key: ValueKey(_modelId),
+            initialValue: _models.contains(_modelId) ? _modelId : null,
             decoration: const InputDecoration(labelText: 'Version'),
             isExpanded: true,
             items: _models
