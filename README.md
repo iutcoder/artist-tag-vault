@@ -35,7 +35,7 @@ repository root, run:
 
 ```bash
 flutter create --platforms=macos,windows --org com.iutcoder .
-git restore macos/Runner/DebugProfile.entitlements macos/Runner/Release.entitlements
+git restore .
 flutter pub get
 flutter test
 flutter run -d macos
@@ -47,9 +47,10 @@ but changing it after release creates a different app identity and keychain scop
 
 ### macOS signing and Keychain
 
-`flutter create` writes Flutter's platform template, so the `git restore` step
-immediately restores this project's checked-in entitlement files. They enable
-outbound networking and Keychain access.
+`flutter create` writes Flutter's missing desktop runners. The following
+`git restore .` keeps those new platform files while restoring any tracked source
+or configuration that the template touched, including the checked-in entitlement
+files. They enable outbound networking and Keychain access.
 Open `macos/Runner.xcworkspace` in Xcode, select **Runner**, then choose a Personal
 Team under **Signing & Capabilities**. Both DebugProfile and Release entitlements
 must retain the `keychain-access-groups` entry; otherwise Keychain can return
