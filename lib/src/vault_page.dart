@@ -283,6 +283,20 @@ class _VaultPageState extends State<VaultPage> {
       ..setEntry(1, 3, y);
   }
 
+  void _updateViewerSize(Size size) {
+    if (_viewerSize == size) return;
+    final refit = _imageAtFit;
+    _viewerSize = size;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || _viewerSize != size) return;
+      if (refit) {
+        _fit();
+      } else {
+        _constrainImagePosition();
+      }
+    });
+  }
+
   void _showNavigationCue(int direction) {
     _navigationCueTimer?.cancel();
     setState(() => _navigationCue = direction);
@@ -501,7 +515,9 @@ class _VaultPageState extends State<VaultPage> {
           Expanded(
             child: LayoutBuilder(
               builder: (context, constraints) {
-                _viewerSize = Size(constraints.maxWidth, constraints.maxHeight);
+                _updateViewerSize(
+                  Size(constraints.maxWidth, constraints.maxHeight),
+                );
                 return ClipRRect(
                   borderRadius: BorderRadius.circular(16),
                   child: ColoredBox(
