@@ -988,6 +988,7 @@ class _UsageCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final percent = usage?.v5Percent;
     final showBoundaryGauge = !expanded && showV5Allowance && percent != null;
+    final showCostWarning = !expanded && mayConsumeAnlas;
     final summary = usage == null
         ? (error ?? 'Usage unavailable')
         : '${usage!.totalAnlas} Anlas'
@@ -1011,30 +1012,42 @@ class _UsageCard extends StatelessWidget {
                 ),
                 child: Row(
                   children: [
-                    const Icon(
-                      Icons.bolt_rounded,
+                    Icon(
+                      showCostWarning
+                          ? Icons.warning_amber_rounded
+                          : Icons.bolt_rounded,
                       size: 18,
-                      color: Color(0xFF68D9D0),
+                      color: showCostWarning
+                          ? Colors.amberAccent
+                          : const Color(0xFF68D9D0),
                     ),
                     const SizedBox(width: 7),
-                    const Text(
+                    Text(
                       'ACCOUNT USAGE',
                       style: TextStyle(
                         fontSize: 11,
                         letterSpacing: 1.2,
                         fontWeight: FontWeight.w700,
-                        color: Colors.white60,
+                        color: showCostWarning
+                            ? Colors.amberAccent
+                            : Colors.white60,
                       ),
                     ),
                     const SizedBox(width: 10),
                     Expanded(
                       child: Text(
-                        loading ? 'Refreshing…' : summary,
+                        loading
+                            ? 'Refreshing…'
+                            : showCostWarning
+                            ? 'May use Anlas · $summary'
+                            : summary,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         textAlign: TextAlign.right,
-                        style: const TextStyle(
-                          color: Colors.white70,
+                        style: TextStyle(
+                          color: showCostWarning
+                              ? Colors.amberAccent
+                              : Colors.white70,
                           fontSize: 11,
                           fontWeight: FontWeight.w600,
                         ),
@@ -1151,6 +1164,8 @@ class _UsageCard extends StatelessWidget {
               minHeight: 4,
               color: usage?.v5Unavailable == true
                   ? Colors.redAccent
+                  : showCostWarning
+                  ? Colors.amberAccent
                   : const Color(0xFF68D9D0),
               backgroundColor: Colors.white10,
             ),

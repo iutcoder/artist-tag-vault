@@ -34,6 +34,11 @@ class _VaultPageState extends State<VaultPage> {
   Size? _imageSize;
   Size? _viewerSize;
   String? _error;
+  Offset? _swipeStart;
+  Offset _trackpadSwipe = Offset.zero;
+  bool _trackingTrackpadSwipe = false;
+  int? _navigationCue;
+  Timer? _navigationCueTimer;
 
   @override
   void initState() {
@@ -46,6 +51,7 @@ class _VaultPageState extends State<VaultPage> {
   void dispose() {
     _search.dispose();
     _transform.dispose();
+    _navigationCueTimer?.cancel();
     super.dispose();
   }
 
@@ -118,13 +124,51 @@ class _VaultPageState extends State<VaultPage> {
     unawaited(_readSelectedImageSize());
   }
 
-  void _moveSelection(int delta) {
+  bool _moveSelection(int delta, {bool showCue = false}) {
     final sample = _selected;
-    if (sample == null) return;
+    if (sample == null) return false;
     final index = _artistSamples.indexOf(sample);
     final next = index + delta;
-    if (next < 0 || next >= _artistSamples.length) return;
+    if (next < 0 || next >= _artistSamples.length) return false;
+    if (showCue) _showNavigationCue(delta);
     _selectSample(_artistSamples[next]);
+    return true;
+  }
+
+  bool get _canSwipeImages {
+    final image = _imageSize;
+    final viewer = _viewerSize;
+    if (image == null || viewer == null || _artistSamples.length < 2) {
+      return false;
+    }
+    final fitScale = math
+        .min(viewer.width / image.width, viewer.height / image.height)
+        .clamp(0.01, 8.0)
+        .toDouble();
+    final currentScale = _transform.value.getMaxScaleOnAxis();
+    return (currentScale - fitScale).abs() <= math.max(.015, fitScale * .03);
+  }
+
+  void _finishImageSwipe(Offset distance) {
+    if (!_canSwipeImages) {
+      return;
+    }
+    final isHorizontalPageSwipe =
+        distance.dx.abs() >= 56 && distance.dx.abs() > distance.dy.abs() * 1.2;
+    if (!isHorizontalPageSwipe) {
+      _fit();
+      return;
+    }
+    final moved = _moveSelection(distance.dx < 0 ? 1 : -1, showCue: true);
+    if (!moved) _fit();
+  }
+
+  void _showNavigationCue(int direction) {
+    _navigationCueTimer?.cancel();
+    setState(() => _navigationCue = direction);
+    _navigationCueTimer = Timer(const Duration(milliseconds: 500), () {
+      if (mounted) setState(() => _navigationCue = null);
+    });
   }
 
   Future<void> _readSelectedImageSize() async {
@@ -353,18 +397,72 @@ class _VaultPageState extends State<VaultPage> {
                               style: TextStyle(color: Colors.white38),
                             ),
                           )
-                        : InteractiveViewer(
-                            transformationController: _transform,
-                            constrained: false,
-                            boundaryMargin: const EdgeInsets.all(
-                              double.infinity,
-                            ),
-                            minScale: .01,
-                            maxScale: 8,
-                            child: SizedBox(
-                              width: _imageSize?.width,
-                              height: _imageSize?.height,
-                              child: Image.file(sample.file, fit: BoxFit.fill),
+                        : Listener(
+                            behavior: HitTestBehavior.opaque,
+                            onPointerDown: (event) {
+                              _swipeStart = _canSwipeImages
+                                  ? event.localPosition
+                                  : null;
+                            },
+                            onPointerUp: (event) {
+                              final start = _swipeStart;
+                              _swipeStart = null;
+                              if (start != null) {
+                                _finishImageSwipe(event.localPosition - start);
+                              }
+                            },
+                            onPointerCancel: (_) => _swipeStart = null,
+                            onPointerPanZoomStart: (_) {
+                              _trackingTrackpadSwipe = _canSwipeImages;
+                              _trackpadSwipe = Offset.zero;
+                            },
+                            onPointerPanZoomUpdate: (event) {
+                              if (_trackingTrackpadSwipe) {
+                                _trackpadSwipe += event.panDelta;
+                              }
+                            },
+                            onPointerPanZoomEnd: (_) {
+                              if (_trackingTrackpadSwipe) {
+                                _finishImageSwipe(_trackpadSwipe);
+                              }
+                              _trackingTrackpadSwipe = false;
+                              _trackpadSwipe = Offset.zero;
+                            },
+                            child: Stack(
+                              fit: StackFit.expand,
+                              children: [
+                                InteractiveViewer(
+                                  transformationController: _transform,
+                                  constrained: false,
+                                  boundaryMargin: const EdgeInsets.all(
+                                    double.infinity,
+                                  ),
+                                  minScale: .01,
+                                  maxScale: 8,
+                                  child: SizedBox(
+                                    width: _imageSize?.width,
+                                    height: _imageSize?.height,
+                                    child: Image.file(
+                                      sample.file,
+                                      fit: BoxFit.fill,
+                                    ),
+                                  ),
+                                ),
+                                IgnorePointer(
+                                  child: AnimatedSwitcher(
+                                    duration: const Duration(milliseconds: 160),
+                                    reverseDuration: const Duration(
+                                      milliseconds: 220,
+                                    ),
+                                    child: _navigationCue == null
+                                        ? const SizedBox.shrink()
+                                        : _NavigationCue(
+                                            key: ValueKey(_navigationCue),
+                                            direction: _navigationCue!,
+                                          ),
+                                  ),
+                                ),
+                              ],
                             ),
                           ),
                   ),
@@ -380,9 +478,34 @@ class _VaultPageState extends State<VaultPage> {
                 tooltip: 'Previous image',
                 onPressed: sample == null || _artistSamples.indexOf(sample) <= 0
                     ? null
-                    : () => _moveSelection(-1),
+                    : () => _moveSelection(-1, showCue: true),
                 icon: const Icon(Icons.chevron_left_rounded),
               ),
+              SizedBox(
+                width: 54,
+                child: Text(
+                  sample == null
+                      ? '0 / 0'
+                      : '${_artistSamples.indexOf(sample) + 1} / ${_artistSamples.length}',
+                  textAlign: TextAlign.center,
+                ),
+              ),
+              IconButton(
+                tooltip: 'Next image',
+                onPressed:
+                    sample == null ||
+                        _artistSamples.indexOf(sample) >=
+                            _artistSamples.length - 1
+                    ? null
+                    : () => _moveSelection(1, showCue: true),
+                icon: const Icon(Icons.chevron_right_rounded),
+              ),
+              const SizedBox(width: 12),
+              const SizedBox(
+                height: 22,
+                child: VerticalDivider(width: 1, thickness: 1),
+              ),
+              const SizedBox(width: 12),
               IconButton(
                 tooltip: 'Zoom out',
                 onPressed: sample == null ? null : () => _zoom(.8),
@@ -400,22 +523,6 @@ class _VaultPageState extends State<VaultPage> {
                 tooltip: 'Zoom in',
                 onPressed: sample == null ? null : () => _zoom(1.25),
                 icon: const Icon(Icons.add_rounded),
-              ),
-              const SizedBox(width: 12),
-              Text(
-                sample == null
-                    ? '0 / 0'
-                    : '${_artistSamples.indexOf(sample) + 1} / ${_artistSamples.length}',
-              ),
-              IconButton(
-                tooltip: 'Next image',
-                onPressed:
-                    sample == null ||
-                        _artistSamples.indexOf(sample) >=
-                            _artistSamples.length - 1
-                    ? null
-                    : () => _moveSelection(1),
-                icon: const Icon(Icons.chevron_right_rounded),
               ),
             ],
           ),
@@ -542,6 +649,38 @@ class _VaultPageState extends State<VaultPage> {
               (fallback == null ? null : sample.metadata[fallback]) ??
               '—')
           .toString();
+}
+
+class _NavigationCue extends StatelessWidget {
+  const _NavigationCue({required this.direction, super.key});
+
+  final int direction;
+
+  @override
+  Widget build(BuildContext context) {
+    return Align(
+      alignment: direction < 0 ? Alignment.centerLeft : Alignment.centerRight,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 24),
+        child: DecoratedBox(
+          decoration: const BoxDecoration(
+            color: Colors.black54,
+            shape: BoxShape.circle,
+          ),
+          child: Padding(
+            padding: const EdgeInsets.all(10),
+            child: Icon(
+              direction < 0
+                  ? Icons.chevron_left_rounded
+                  : Icons.chevron_right_rounded,
+              size: 38,
+              color: Colors.white,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
 }
 
 class _InfoLine extends StatelessWidget {
