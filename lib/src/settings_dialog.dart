@@ -1,6 +1,7 @@
 import 'package:artist_tag_vault/src/models/app_settings.dart';
 import 'package:artist_tag_vault/src/services/danbooru_autocomplete.dart';
 import 'package:artist_tag_vault/src/services/novelai_api.dart';
+import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
 
 /// Stores account-level settings. Generation controls live in Advanced.
@@ -72,6 +73,31 @@ class _SettingsDialogState extends State<SettingsDialog> {
         onProgress: (count) {
           if (mounted) setState(() => _downloadedArtists = count);
         },
+      );
+      if (!mounted) return;
+      setState(() => _dictionaryStatus = status);
+    } on Exception catch (error) {
+      if (mounted) setState(() => _dictionaryError = error.toString());
+    } finally {
+      if (mounted) setState(() => _updatingDictionary = false);
+    }
+  }
+
+  Future<void> _importDictionary() async {
+    const jsonType = XTypeGroup(
+      label: 'JSON tag dictionaries',
+      extensions: ['json'],
+    );
+    final source = await openFile(acceptedTypeGroups: const [jsonType]);
+    if (source == null || !mounted) return;
+    setState(() {
+      _updatingDictionary = true;
+      _downloadedArtists = 0;
+      _dictionaryError = null;
+    });
+    try {
+      final status = await widget.artistDictionary.importDictionaryJson(
+        await source.readAsString(),
       );
       if (!mounted) return;
       setState(() => _dictionaryStatus = status);
@@ -176,6 +202,12 @@ class _SettingsDialogState extends State<SettingsDialog> {
                     ? 'Update artist dictionary'
                     : 'Download artist dictionary',
               ),
+            ),
+            const SizedBox(height: 8),
+            OutlinedButton.icon(
+              onPressed: _updatingDictionary ? null : _importDictionary,
+              icon: const Icon(Icons.file_open_rounded),
+              label: const Text('Import tags.json'),
             ),
             const SizedBox(height: 10),
             Row(

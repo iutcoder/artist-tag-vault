@@ -48,14 +48,18 @@ class DanbooruAutocompleteService {
     http.Client? client,
     Uri? endpoint,
     Future<File> Function()? dictionaryFile,
-    int pageSize = 1000,
-    Duration pageDelay = const Duration(milliseconds: 250),
+    int pageSize = 500,
+    Duration pageDelay = const Duration(milliseconds: 500),
+    int maxRequestAttempts = 3,
+    Duration retryDelay = const Duration(seconds: 1),
   }) : _client = client ?? http.Client(),
        _ownsClient = client == null,
-       _endpoint = endpoint ?? Uri.https('danbooru.donmai.us', '/tags.json'),
+       _endpoint = endpoint ?? Uri.https('shima.donmai.us', '/tags.json'),
        _dictionaryFile = dictionaryFile ?? _defaultDictionaryFile,
        _pageSize = pageSize,
-       _pageDelay = pageDelay;
+       _pageDelay = pageDelay,
+       _maxRequestAttempts = maxRequestAttempts,
+       _retryDelay = retryDelay;
 
   final http.Client _client;
   final bool _ownsClient;
@@ -63,6 +67,8 @@ class DanbooruAutocompleteService {
   final Future<File> Function() _dictionaryFile;
   final int _pageSize;
   final Duration _pageDelay;
+  final int _maxRequestAttempts;
+  final Duration _retryDelay;
   List<DanbooruArtistSuggestion> _artists = const [];
   DateTime? _updatedAt;
   Future<void>? _loadOperation;
@@ -114,7 +120,7 @@ class DanbooruAutocompleteService {
     try {
       final downloaded = <String, DanbooruArtistSuggestion>{};
       var cursor = '1';
-      for (var pageNumber = 1; pageNumber <= 100; pageNumber++) {
+      for (var pageNumber = 1; pageNumber <= 200; pageNumber++) {
         final page = await _downloadPage(cursor);
         for (final entry in page.artists) {
           downloaded[entry.value] = entry;
@@ -123,7 +129,7 @@ class DanbooruAutocompleteService {
         if (page.artists.length < _pageSize || page.lastId == null) break;
         if (_pageDelay > Duration.zero) await Future<void>.delayed(_pageDelay);
         cursor = 'b${page.lastId}';
-        if (pageNumber == 100) {
+        if (pageNumber == 200) {
           throw const DanbooruAutocompleteException(
             'Artist dictionary exceeded the pagination safety limit.',
           );
@@ -153,6 +159,72 @@ class DanbooruAutocompleteService {
     }
   }
 
+  Future<DanbooruDictionaryStatus> importDictionaryJson(String source) async {
+    if (_updating) {
+      throw const DanbooruAutocompleteException(
+        'Artist dictionary update is already running.',
+      );
+    }
+    _updating = true;
+    try {
+      final decoded = jsonDecode(source);
+      final List entries;
+      if (decoded is List) {
+        entries = decoded;
+      } else if (decoded is Map && decoded['artists'] is List) {
+        entries = decoded['artists'] as List;
+      } else {
+        throw const DanbooruAutocompleteException(
+          'The selected JSON file is not a supported tag dictionary.',
+        );
+      }
+      final imported = <String, DanbooruArtistSuggestion>{};
+      for (final raw in entries.whereType<Map>()) {
+        final isInternalEntry = raw.containsKey('value') &&
+            !raw.containsKey('type') &&
+            !raw.containsKey('category');
+        final type = raw['type']?.toString().toLowerCase();
+        final category = int.tryParse(raw['category']?.toString() ?? '');
+        final isArtist = isInternalEntry || type == 'artist' || category == 1;
+        final isDeprecated = raw['is_deprecated'] == true;
+        if (!isArtist || isDeprecated) continue;
+        final name = (raw['value'] ?? raw['name'] ?? raw['label'])
+            ?.toString()
+            .trim();
+        if (name == null || name.isEmpty) continue;
+        final count = int.tryParse(
+              (raw['count'] ?? raw['post_count'])?.toString() ?? '',
+            ) ??
+            0;
+        imported[name] = DanbooruArtistSuggestion(value: name, count: count);
+      }
+      if (imported.isEmpty) {
+        throw const DanbooruAutocompleteException(
+          'No artist tags were found in the selected JSON file.',
+        );
+      }
+      final artists = imported.values.toList()
+        ..sort((a, b) {
+          final countOrder = b.count.compareTo(a.count);
+          return countOrder != 0 ? countOrder : a.value.compareTo(b.value);
+        });
+      final updatedAt = DateTime.now().toUtc();
+      await _saveDictionary(artists, updatedAt);
+      _artists = List.unmodifiable(artists);
+      _updatedAt = updatedAt;
+      return DanbooruDictionaryStatus(
+        artistCount: artists.length,
+        updatedAt: updatedAt,
+      );
+    } on FormatException {
+      throw const DanbooruAutocompleteException(
+        'The selected file is not valid JSON.',
+      );
+    } finally {
+      _updating = false;
+    }
+  }
+
   Future<_DanbooruArtistPage> _downloadPage(String page) async {
     final uri = _endpoint.replace(
       queryParameters: {
@@ -165,15 +237,41 @@ class DanbooruAutocompleteService {
         'page': '$page',
       },
     );
-    final response = await _client
-        .get(
-          uri,
-          headers: const {
-            'Accept': 'application/json',
-            'User-Agent': 'ArtistTagVault/0.0.1',
-          },
-        )
-        .timeout(const Duration(seconds: 15));
+    http.Response? response;
+    Object? lastError;
+    for (var attempt = 1; attempt <= _maxRequestAttempts; attempt++) {
+      response = null;
+      try {
+        response = await _client
+            .get(
+              uri,
+              headers: const {
+                'Accept': 'application/json',
+                'Connection': 'close',
+                'User-Agent': 'ArtistTagVault/0.0.1',
+              },
+            )
+            .timeout(const Duration(seconds: 15));
+        if (!_isRetryableStatus(response.statusCode) ||
+            attempt == _maxRequestAttempts) {
+          break;
+        }
+        lastError = 'HTTP ${response.statusCode}';
+      } on Exception catch (error) {
+        lastError = error;
+        if (attempt == _maxRequestAttempts) break;
+      }
+      if (_retryDelay > Duration.zero) {
+        await Future<void>.delayed(_retryDelay * attempt);
+      }
+    }
+    if (response == null) {
+      throw DanbooruAutocompleteException(
+        'Could not connect to Danbooru after $_maxRequestAttempts attempts. '
+        'If Danbooru HTTPS is blocked on this network, import a tags.json '
+        'file instead. ($lastError)',
+      );
+    }
     if (response.statusCode != 200) {
       throw DanbooruAutocompleteException(
         'Danbooru returned HTTP ${response.statusCode} on page $page.',
@@ -202,6 +300,9 @@ class DanbooruAutocompleteService {
           : int.tryParse(records.last['id']?.toString() ?? ''),
     );
   }
+
+  bool _isRetryableStatus(int statusCode) =>
+      statusCode == 429 || statusCode >= 500;
 
   Future<void> _loadDictionary() async {
     try {

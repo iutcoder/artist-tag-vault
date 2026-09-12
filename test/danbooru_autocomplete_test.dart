@@ -91,6 +91,7 @@ void main() {
       client: MockClient((request) async => http.Response('unavailable', 503)),
       dictionaryFile: () async => dictionary,
       pageDelay: Duration.zero,
+      maxRequestAttempts: 1,
     );
 
     await expectLater(
@@ -101,6 +102,62 @@ void main() {
     expect((await service.suggestArtists('saved')).single.value, 'saved_artist');
     expect(await dictionary.readAsString(), contains('saved_artist'));
   });
+
+  test('retries a transient connection failure', () async {
+    final temporary = await Directory.systemTemp.createTemp(
+      'artist-tag-vault-retry-dictionary-',
+    );
+    addTearDown(() async => temporary.delete(recursive: true));
+    var attempts = 0;
+    final service = DanbooruAutocompleteService(
+      client: MockClient((request) async {
+        attempts++;
+        if (attempts == 1) throw http.ClientException('connection reset');
+        return http.Response(
+          '[{"id":1,"name":"recovered_artist","post_count":20}]',
+          200,
+        );
+      }),
+      dictionaryFile: () async => File(
+        path.join(temporary.path, 'artists.json'),
+      ),
+      retryDelay: Duration.zero,
+    );
+
+    final status = await service.updateDictionary();
+
+    expect(attempts, 2);
+    expect(status.artistCount, 1);
+  });
+
+  test(
+    'imports Pheropix and Danbooru tag JSON as an artist dictionary',
+    () async {
+      final temporary = await Directory.systemTemp.createTemp(
+        'artist-tag-vault-import-dictionary-',
+      );
+      addTearDown(() async => temporary.delete(recursive: true));
+      final dictionary = File(path.join(temporary.path, 'artists.json'));
+      final service = DanbooruAutocompleteService(
+        client: MockClient((request) async => http.Response('[]', 200)),
+        dictionaryFile: () async => dictionary,
+      );
+
+      final status = await service.importDictionaryJson(
+        '[{"value":"oshioshio","count":400,"type":"artist",'
+        '"category":1,"aliases":[]},'
+        '{"name":"ningen_mame","post_count":300,"category":1},'
+        '{"value":"1girl","count":1000,"type":"general","category":0}]',
+      );
+
+      expect(status.artistCount, 2);
+      expect(
+        (await service.suggestArtists('ningen')).single.value,
+        'ningen_mame',
+      );
+      expect(await dictionary.readAsString(), isNot(contains('1girl')));
+    },
+  );
 
   test('does not search for fewer than two characters', () async {
     final service = DanbooruAutocompleteService(
