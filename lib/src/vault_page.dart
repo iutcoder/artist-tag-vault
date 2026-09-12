@@ -35,6 +35,8 @@ class _VaultPageState extends State<VaultPage> {
   Size? _viewerSize;
   String? _error;
   Offset? _swipeStart;
+  int? _swipePointer;
+  bool _imageAtFit = true;
   Offset _trackpadSwipe = Offset.zero;
   bool _trackingTrackpadSwipe = false;
   int? _navigationCue;
@@ -44,12 +46,14 @@ class _VaultPageState extends State<VaultPage> {
   void initState() {
     super.initState();
     _search.addListener(() => setState(() {}));
+    _transform.addListener(_handleTransformChanged);
     _reload();
   }
 
   @override
   void dispose() {
     _search.dispose();
+    _transform.removeListener(_handleTransformChanged);
     _transform.dispose();
     _navigationCueTimer?.cancel();
     super.dispose();
@@ -136,31 +140,39 @@ class _VaultPageState extends State<VaultPage> {
   }
 
   bool get _canSwipeImages {
-    final image = _imageSize;
-    final viewer = _viewerSize;
-    if (image == null || viewer == null || _artistSamples.length < 2) {
-      return false;
-    }
-    final fitScale = math
-        .min(viewer.width / image.width, viewer.height / image.height)
-        .clamp(0.01, 8.0)
-        .toDouble();
-    final currentScale = _transform.value.getMaxScaleOnAxis();
-    return (currentScale - fitScale).abs() <= math.max(.015, fitScale * .03);
+    return _imageAtFit && _artistSamples.length > 1;
   }
 
   void _finishImageSwipe(Offset distance) {
-    if (!_canSwipeImages) {
-      return;
-    }
     final isHorizontalPageSwipe =
         distance.dx.abs() >= 56 && distance.dx.abs() > distance.dy.abs() * 1.2;
     if (!isHorizontalPageSwipe) {
-      _fit();
       return;
     }
-    final moved = _moveSelection(distance.dx < 0 ? 1 : -1, showCue: true);
-    if (!moved) _fit();
+    _moveSelection(distance.dx < 0 ? 1 : -1, showCue: true);
+  }
+
+  void _handleTransformChanged() {
+    final atFit = _matchesFitTransform();
+    if (!mounted || atFit == _imageAtFit) return;
+    setState(() => _imageAtFit = atFit);
+  }
+
+  bool _matchesFitTransform() {
+    final image = _imageSize;
+    final viewer = _viewerSize;
+    if (image == null || viewer == null) return true;
+    final scale = math
+        .min(viewer.width / image.width, viewer.height / image.height)
+        .clamp(0.01, 8.0)
+        .toDouble();
+    final x = (viewer.width - image.width * scale) / 2;
+    final y = (viewer.height - image.height * scale) / 2;
+    final matrix = _transform.value;
+    final scaleTolerance = math.max(.001, scale * .005);
+    return (matrix.getMaxScaleOnAxis() - scale).abs() <= scaleTolerance &&
+        (matrix.entry(0, 3) - x).abs() <= .5 &&
+        (matrix.entry(1, 3) - y).abs() <= .5;
   }
 
   void _showNavigationCue(int direction) {
@@ -400,18 +412,28 @@ class _VaultPageState extends State<VaultPage> {
                         : Listener(
                             behavior: HitTestBehavior.opaque,
                             onPointerDown: (event) {
-                              _swipeStart = _canSwipeImages
-                                  ? event.localPosition
-                                  : null;
+                              if (_swipePointer != null) {
+                                _swipePointer = null;
+                                _swipeStart = null;
+                              } else if (_canSwipeImages) {
+                                _swipePointer = event.pointer;
+                                _swipeStart = event.localPosition;
+                              }
                             },
                             onPointerUp: (event) {
+                              if (event.pointer != _swipePointer) return;
                               final start = _swipeStart;
+                              _swipePointer = null;
                               _swipeStart = null;
                               if (start != null) {
                                 _finishImageSwipe(event.localPosition - start);
                               }
                             },
-                            onPointerCancel: (_) => _swipeStart = null,
+                            onPointerCancel: (event) {
+                              if (event.pointer != _swipePointer) return;
+                              _swipePointer = null;
+                              _swipeStart = null;
+                            },
                             onPointerPanZoomStart: (_) {
                               _trackingTrackpadSwipe = _canSwipeImages;
                               _trackpadSwipe = Offset.zero;
@@ -437,6 +459,7 @@ class _VaultPageState extends State<VaultPage> {
                                   boundaryMargin: const EdgeInsets.all(
                                     double.infinity,
                                   ),
+                                  panEnabled: !_imageAtFit,
                                   minScale: .01,
                                   maxScale: 8,
                                   child: SizedBox(
