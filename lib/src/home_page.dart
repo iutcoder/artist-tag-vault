@@ -1,7 +1,6 @@
 import 'dart:async';
 import 'dart:io';
 import 'dart:math';
-import 'dart:typed_data';
 
 import 'package:artist_tag_vault/src/models/account_usage.dart';
 import 'package:artist_tag_vault/src/models/app_settings.dart';
@@ -48,7 +47,6 @@ class _HomePageState extends State<HomePage> {
 
   AppSettings _settings = AppSettings.defaults();
   File? _previewFile;
-  Uint8List? _previewBytes;
   String _status = 'Enter an artist name to create a standardized sample.';
   bool _busy = false;
   bool _previewExpanded = true;
@@ -208,32 +206,24 @@ class _HomePageState extends State<HomePage> {
           preset: _settings.preset,
           seed: requestSeed,
         );
-        if (custom) {
-          if (!mounted) return;
-          setState(() {
-            _previewFile = null;
-            _previewBytes = generated.bytes;
-            _seed = generated.seed;
-            _status = 'Generated ${index + 1} / $_generationCount · not saved';
-          });
-        } else {
-          final file = await _sampleStorage.save(
-            bytes: generated.bytes,
-            artist: artist,
-            composedPrompt: prompt,
-            composedUndesiredContent: negativePrompt,
-            seed: generated.seed,
-            artistWeight: _artistWeight,
-            preset: _settings.preset,
-          );
-          if (!mounted) return;
-          setState(() {
-            _previewBytes = null;
-            _previewFile = file;
-            _seed = generated.seed;
-            _status = 'Saved ${index + 1} / $_generationCount · ${file.path}';
-          });
-        }
+        final file = await _sampleStorage.save(
+          bytes: generated.bytes,
+          artist: custom ? 'Custom' : artist,
+          composedPrompt: prompt,
+          composedUndesiredContent: negativePrompt,
+          seed: generated.seed,
+          artistWeight: custom ? 1 : _artistWeight,
+          preset: _settings.preset,
+          customArtists: custom ? preparedArtists : null,
+          randomizeCustomOrder: _randomizeCustomOrder,
+          randomizeCustomWeights: _randomizeCustomWeights,
+        );
+        if (!mounted) return;
+        setState(() {
+          _previewFile = file;
+          _seed = generated.seed;
+          _status = 'Saved ${index + 1} / $_generationCount · ${file.path}';
+        });
       }
       unawaited(_refreshUsage());
     } on Exception catch (error) {
@@ -323,16 +313,34 @@ class _HomePageState extends State<HomePage> {
     final preset = rawPreset is Map<String, dynamic>
         ? GenerationPreset.fromJson(rawPreset)
         : _settings.preset;
+    final customArtists = (sample.metadata['customArtists'] as List?)
+            ?.map(CustomArtist.fromJson)
+            .whereType<CustomArtist>()
+            .toList() ??
+        const <CustomArtist>[];
+    final loadAsCustom = sample.isCustom && customArtists.isNotEmpty;
     setState(() {
-      _workspace = _Workspace.generate;
+      _workspace = loadAsCustom ? _Workspace.custom : _Workspace.generate;
       _settings = _settings.copyWith(preset: preset);
-      _artistController.text = sample.artist;
+      if (loadAsCustom) {
+        _customArtists
+          ..clear()
+          ..addAll(customArtists);
+        _randomizeCustomOrder =
+            sample.metadata['randomizeCustomOrder'] == true;
+        _randomizeCustomWeights =
+            sample.metadata['randomizeCustomWeights'] == true;
+      } else {
+        _artistController.text = sample.artist;
+      }
       _promptController.text = preset.prompt;
       _undesiredController.text = preset.undesiredContent;
       _seed = sample.seed ?? _seed;
       _seedLocked = sample.seed != null;
-      _artistWeight =
-          (sample.metadata['artistWeight'] as num?)?.toDouble() ?? 1;
+      if (!loadAsCustom) {
+        _artistWeight =
+            (sample.metadata['artistWeight'] as num?)?.toDouble() ?? 1;
+      }
       _advancedExpanded = true;
       _status = 'Loaded settings from ${path.basename(sample.file.path)}';
     });
@@ -1233,14 +1241,8 @@ class _HomePageState extends State<HomePage> {
                 Expanded(
                   child: ClipRRect(
                     borderRadius: BorderRadius.circular(16),
-                    child: _previewFile == null && _previewBytes == null
+                    child: _previewFile == null
                         ? const _EmptyPreview()
-                        : _previewBytes != null
-                        ? Image.memory(
-                            _previewBytes!,
-                            fit: BoxFit.contain,
-                            gaplessPlayback: true,
-                          )
                         : Image.file(
                             _previewFile!,
                             fit: BoxFit.contain,

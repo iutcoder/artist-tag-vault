@@ -1,11 +1,61 @@
+import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 
+import 'package:artist_tag_vault/src/models/custom_artist.dart';
+import 'package:artist_tag_vault/src/models/generation_preset.dart';
 import 'package:artist_tag_vault/src/models/saved_sample.dart';
 import 'package:artist_tag_vault/src/services/sample_storage.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as path;
 
 void main() {
+  test(
+    'saves Custom samples under the model custom folder with artists',
+    () async {
+      final temporary = await Directory.systemTemp.createTemp(
+        'artist-tag-vault-custom-save-',
+      );
+      addTearDown(() async {
+        if (await temporary.exists()) await temporary.delete(recursive: true);
+      });
+      final root = Directory(path.join(temporary.path, 'samples'));
+      final preset = GenerationPreset.defaults();
+      final storage = SampleStorage(rootDirectory: root);
+
+      final image = await storage.save(
+        bytes: Uint8List.fromList([1, 2, 3]),
+        artist: 'Custom',
+        composedPrompt: 'artist:first, 1.25:: artist:second ::, 1girl',
+        composedUndesiredContent: 'lowres',
+        seed: 123,
+        artistWeight: 1,
+        preset: preset,
+        customArtists: const [
+          CustomArtist(name: 'first'),
+          CustomArtist(name: 'second', weight: 1.25, fixed: true),
+        ],
+        randomizeCustomOrder: true,
+        randomizeCustomWeights: true,
+      );
+
+      expect(
+        image.parent.path,
+        path.join(root.path, preset.model.apiId, '_artist-mixes'),
+      );
+      final sidecar = jsonDecode(
+        await File(path.setExtension(image.path, '.json')).readAsString(),
+      ) as Map<String, dynamic>;
+      expect(sidecar['artist'], 'Artist Mixes');
+      expect(sidecar['isCustom'], isTrue);
+      expect(sidecar['randomizeCustomOrder'], isTrue);
+      expect(sidecar['randomizeCustomWeights'], isTrue);
+      expect(sidecar['customArtists'], hasLength(2));
+      expect((sidecar['customArtists'] as List).last['fixed'], isTrue);
+      expect(sidecar['composedPrompt'], contains('artist:second'));
+    },
+  );
+
   test('deleteSample removes the PNG, sidecar, and empty folders', () async {
     final temporary = await Directory.systemTemp.createTemp(
       'artist-tag-vault-delete-',

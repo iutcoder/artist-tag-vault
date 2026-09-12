@@ -25,4 +25,37 @@ void main() {
     expect(sampleWithPrompt('artist:a').subject, SampleSubject.others);
     expect(sampleWithPrompt('11girls, artist:a').subject, SampleSubject.others);
   });
+
+  test('identifies samples saved by Custom generation', () {
+    final custom = SavedSample(
+      file: File('custom.png'),
+      artist: 'Custom',
+      modelId: 'model',
+      createdAt: DateTime(2026),
+      metadata: const {'isCustom': true},
+    );
+    expect(custom.isCustom, isTrue);
+    expect(custom.vaultGroupKey, 'custom:');
+    expect(custom.vaultGroupLabel, 'Artist Mixes');
+    expect(sampleWithPrompt('artist:a').isCustom, isFalse);
+    expect(sampleWithPrompt('artist:a').vaultGroupKey, 'artist:sample');
+  });
+
+  test('Custom and an identically named artist use separate Vault groups', () {
+    final custom = SavedSample(
+      file: File('custom.png'),
+      artist: 'Artist Mixes',
+      modelId: 'model',
+      createdAt: DateTime(2026),
+      metadata: const {'isCustom': true},
+    );
+    final artist = SavedSample(
+      file: File('artist.png'),
+      artist: 'Artist Mixes',
+      modelId: 'model',
+      createdAt: DateTime(2026),
+      metadata: const {},
+    );
+    expect(custom.vaultGroupKey, isNot(artist.vaultGroupKey));
+  });
 }

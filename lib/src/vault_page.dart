@@ -89,7 +89,7 @@ class _VaultPageState extends State<VaultPage> {
         _selectionAnchorPath = null;
         _modelId ??= samples.isEmpty ? null : samples.first.modelId;
         final visible = _modelSamples;
-        _artist = visible.isEmpty ? null : visible.first.artist;
+        _artist = visible.isEmpty ? null : visible.first.vaultGroupKey;
         _selected = _artistSamples.isEmpty ? null : _artistSamples.first;
       });
       unawaited(_readSelectedImageSize());
@@ -108,8 +108,17 @@ class _VaultPageState extends State<VaultPage> {
       .toList();
 
   List<String> get _allModelArtists {
-    final artists = _modelSamples.map((sample) => sample.artist).toSet().toList();
-    artists.sort((a, b) => a.toLowerCase().compareTo(b.toLowerCase()));
+    final artists = _modelSamples
+        .map((sample) => sample.vaultGroupKey)
+        .toSet()
+        .toList();
+    artists.sort((a, b) {
+      if (a == 'custom:' && b != 'custom:') return -1;
+      if (b == 'custom:' && a != 'custom:') return 1;
+      return _artistLabel(a).toLowerCase().compareTo(
+        _artistLabel(b).toLowerCase(),
+      );
+    });
     return artists;
   }
 
@@ -117,14 +126,20 @@ class _VaultPageState extends State<VaultPage> {
     final query = _search.text.trim().toLowerCase();
     return _allModelArtists
         .where(
-          (artist) => query.isEmpty || artist.toLowerCase().contains(query),
+          (artist) =>
+              query.isEmpty ||
+              _artistLabel(artist).toLowerCase().contains(query),
         )
         .toList();
   }
 
   List<SavedSample> get _allArtistSamples => _modelSamples
-      .where((sample) => _artist == null || sample.artist == _artist)
+      .where((sample) => _artist == null || sample.vaultGroupKey == _artist)
       .toList();
+
+  String _artistLabel(String groupKey) => _modelSamples
+      .firstWhere((sample) => sample.vaultGroupKey == groupKey)
+      .vaultGroupLabel;
 
   List<SavedSample> get _artistSamples =>
       _allArtistSamples.where(_matchesSubjectFilter).toList();
@@ -143,7 +158,9 @@ class _VaultPageState extends State<VaultPage> {
       _selectedPaths.clear();
       _selectionAnchorPath = null;
       _modelId = value;
-      _artist = _modelSamples.isEmpty ? null : _modelSamples.first.artist;
+      _artist = _modelSamples.isEmpty
+          ? null
+          : _modelSamples.first.vaultGroupKey;
       _selected = _artistSamples.isEmpty ? null : _artistSamples.first;
     });
     unawaited(_readSelectedImageSize());
@@ -384,7 +401,7 @@ class _VaultPageState extends State<VaultPage> {
         .where((sample) => !deletedPaths.contains(sample.file.path))
         .toList();
     String? nextModel = reference.modelId;
-    String? nextArtist = reference.artist;
+    String? nextArtist = reference.vaultGroupKey;
     SavedSample? nextSample;
 
     SavedSample? preserved;
@@ -400,7 +417,7 @@ class _VaultPageState extends State<VaultPage> {
         .where(
           (sample) =>
               sample.modelId == reference.modelId &&
-              sample.artist == reference.artist &&
+              sample.vaultGroupKey == reference.vaultGroupKey &&
               _matchesSubjectFilter(sample),
         )
         .toList();
@@ -413,12 +430,14 @@ class _VaultPageState extends State<VaultPage> {
             .toList();
         if (sameModel.isNotEmpty) {
           nextArtist = _adjacentValue(
-            current: reference.artist,
+            current: reference.vaultGroupKey,
             previousOrder: artistsBefore,
-            remaining: sameModel.map((sample) => sample.artist).toSet(),
+            remaining: sameModel
+                .map((sample) => sample.vaultGroupKey)
+                .toSet(),
           );
           nextSample = sameModel.firstWhere(
-            (sample) => sample.artist == nextArtist,
+            (sample) => sample.vaultGroupKey == nextArtist,
           );
         } else if (remaining.isNotEmpty) {
           nextModel = _adjacentValue(
@@ -429,7 +448,7 @@ class _VaultPageState extends State<VaultPage> {
           nextSample = remaining.firstWhere(
             (sample) => sample.modelId == nextModel,
           );
-          nextArtist = nextSample.artist;
+          nextArtist = nextSample.vaultGroupKey;
         } else {
           nextModel = null;
           nextArtist = null;
@@ -816,7 +835,7 @@ class _VaultPageState extends State<VaultPage> {
                     itemBuilder: (context, index) {
                       final artist = _artists[index];
                       final count = _modelSamples
-                          .where((sample) => sample.artist == artist)
+                          .where((sample) => sample.vaultGroupKey == artist)
                           .length;
                       return ListTile(
                         selected: artist == _artist,
@@ -824,7 +843,10 @@ class _VaultPageState extends State<VaultPage> {
                         contentPadding: const EdgeInsets.symmetric(
                           horizontal: 8,
                         ),
-                        title: Text(artist, overflow: TextOverflow.ellipsis),
+                        title: Text(
+                          _artistLabel(artist),
+                          overflow: TextOverflow.ellipsis,
+                        ),
                         trailing: Text('$count'),
                         onTap: () => _selectArtist(artist),
                       );
@@ -872,7 +894,7 @@ class _VaultPageState extends State<VaultPage> {
                 child: Text(
                   _selectionMode
                       ? '${_selectedPaths.length} selected'
-                      : sample?.artist ?? 'IMAGE',
+                      : sample?.vaultGroupLabel ?? 'IMAGE',
                   overflow: TextOverflow.ellipsis,
                   style: _sectionStyle,
                 ),
@@ -1181,6 +1203,11 @@ class _VaultPageState extends State<VaultPage> {
                 child: ListView(
                   children: [
                     _InfoLine('Artist', sample.artist),
+                    if (sample.isCustom)
+                      _InfoLine(
+                        'Artists',
+                        _customArtistSummary(sample) ?? 'See final prompt below',
+                      ),
                     _InfoLine('Model', sample.modelId),
                     _InfoLine('Seed', sample.seed?.toString() ?? '—'),
                     _InfoLine('Created', sample.createdAt.toLocal().toString()),
@@ -1224,7 +1251,9 @@ class _VaultPageState extends State<VaultPage> {
               FilledButton.tonalIcon(
                 onPressed: () => widget.onUseSample(sample),
                 icon: const Icon(Icons.input_rounded),
-                label: const Text('Load in Generate'),
+                label: Text(
+                  sample.isCustom ? 'Load in Custom' : 'Load in Generate',
+                ),
               ),
               const SizedBox(height: 8),
               OutlinedButton.icon(
@@ -1244,6 +1273,19 @@ class _VaultPageState extends State<VaultPage> {
               (fallback == null ? null : sample.metadata[fallback]) ??
               '—')
           .toString();
+
+  String? _customArtistSummary(SavedSample sample) {
+    final rawArtists = sample.metadata['customArtists'];
+    if (rawArtists is! List) return null;
+    final labels = rawArtists.map((raw) {
+      if (raw is! Map) return null;
+      final name = raw['name']?.toString().trim() ?? '';
+      final weight = double.tryParse(raw['weight']?.toString() ?? '');
+      if (name.isEmpty || weight == null) return null;
+      return '$name (${weight.toStringAsFixed(2)})';
+    }).whereType<String>();
+    return labels.isEmpty ? null : labels.join(', ');
+  }
 }
 
 class _NavigationCue extends StatelessWidget {

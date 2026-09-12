@@ -4,6 +4,14 @@ import 'package:artist_tag_vault/src/models/custom_artist.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
+  test('serializes the generated Custom artist list', () {
+    const artist = CustomArtist(name: 'ningen_mame', weight: 1.25, fixed: true);
+    expect(CustomArtist.fromJson(artist.toJson())?.name, artist.name);
+    expect(CustomArtist.fromJson(artist.toJson())?.weight, artist.weight);
+    expect(CustomArtist.fromJson(artist.toJson())?.fixed, isTrue);
+    expect(CustomArtist.fromJson({'name': ''}), isNull);
+  });
+
   test('fixed artists keep their position and weight', () {
     const artists = [
       CustomArtist(name: 'a', weight: .7),

@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
+import 'package:artist_tag_vault/src/models/custom_artist.dart';
 import 'package:artist_tag_vault/src/models/generation_preset.dart';
 import 'package:artist_tag_vault/src/models/saved_sample.dart';
 import 'package:artist_tag_vault/src/services/png_metadata_reader.dart';
@@ -33,9 +34,14 @@ class SampleStorage {
     required int seed,
     required double artistWeight,
     required GenerationPreset preset,
+    List<CustomArtist>? customArtists,
+    bool randomizeCustomOrder = false,
+    bool randomizeCustomWeights = false,
   }) async {
     final root = await rootDirectory();
-    final artistFolder = _safeSegment(artist);
+    final isCustom = customArtists != null;
+    final storedArtist = isCustom ? 'Artist Mixes' : artist.trim();
+    final artistFolder = isCustom ? '_artist-mixes' : _safeSegment(artist);
     final directory = Directory(
       path.join(root.path, preset.model.apiId, artistFolder),
     );
@@ -53,8 +59,15 @@ class SampleStorage {
     final metadataFile = File(path.join(directory.path, '$basename.json'));
     await metadataFile.writeAsString(
       const JsonEncoder.withIndent('  ').convert({
-        'artist': artist.trim(),
-        'artistTag': 'artist:${artist.trim()}',
+        'artist': storedArtist,
+        'isCustom': isCustom,
+        if (!isCustom) 'artistTag': 'artist:${artist.trim()}',
+        if (isCustom)
+          'customArtists': customArtists!
+              .map((artist) => artist.toJson())
+              .toList(),
+        if (isCustom) 'randomizeCustomOrder': randomizeCustomOrder,
+        if (isCustom) 'randomizeCustomWeights': randomizeCustomWeights,
         'artistWeight': artistWeight,
         'generatedAt': generatedAt.toIso8601String(),
         'seed': seed,

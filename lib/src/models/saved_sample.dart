@@ -23,6 +23,9 @@ class SavedSample {
       (metadata['prompt'] ?? metadata['Description'] ?? '').toString();
   String get undesiredContent =>
       (metadata['negative_prompt'] ?? metadata['uc'] ?? '').toString();
+  bool get isCustom => metadata['isCustom'] == true;
+  String get vaultGroupKey => isCustom ? 'custom:' : 'artist:$artist';
+  String get vaultGroupLabel => isCustom ? 'Artist Mixes' : artist;
 
   SampleSubject get subject {
     final normalized = prompt.toLowerCase();

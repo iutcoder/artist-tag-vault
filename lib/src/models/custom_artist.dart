@@ -12,6 +12,24 @@ class CustomArtist {
   final double weight;
   final bool fixed;
 
+  Map<String, dynamic> toJson() => {
+    'name': name,
+    'weight': weight,
+    'fixed': fixed,
+  };
+
+  static CustomArtist? fromJson(Object? value) {
+    if (value is! Map) return null;
+    final name = value['name']?.toString().trim() ?? '';
+    final weight = double.tryParse(value['weight']?.toString() ?? '');
+    if (name.isEmpty || weight == null) return null;
+    return CustomArtist(
+      name: name,
+      weight: weight,
+      fixed: value['fixed'] == true,
+    );
+  }
+
   CustomArtist copyWith({String? name, double? weight, bool? fixed}) {
     return CustomArtist(
       name: name ?? this.name,
