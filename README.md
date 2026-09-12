@@ -55,6 +55,17 @@ The application identifier generated from this project is
 `com.iutcoder.artistTagVault`. It can be changed before the first public release,
 but changing it after release creates a different app identity and keychain scope.
 
+## Automatic desktop builds
+
+The `Desktop Build` GitHub Actions workflow builds unsigned macOS and Windows
+x64 release artifacts after relevant changes are pushed to `main`. It can also
+be started manually from the repository's Actions tab. Successful runs retain
+downloadable ZIP artifacts for seven days.
+
+This workflow only builds the application. It does not create a GitHub Release,
+sign or notarize the macOS app, sign the Windows executable, or publish an
+automatic update.
+
 ### macOS signing and Keychain
 
 `flutter create` writes Flutter's missing desktop runners. The following
