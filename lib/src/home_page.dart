@@ -289,32 +289,38 @@ class _HomePageState extends State<HomePage> {
         children: [
           const _AmbientBackground(),
           SafeArea(
-            child: Padding(
-              padding: const EdgeInsets.all(28),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  _buildHeader(),
-                  const SizedBox(height: 24),
-                  Expanded(
-                    child: _workspace == _Workspace.vault
-                        ? VaultPage(
-                            storage: _sampleStorage,
-                            onUseSample: _loadSample,
-                          )
-                        : LayoutBuilder(
-                            builder: (context, constraints) {
-                              final compact =
-                                  constraints.maxWidth < 860 ||
-                                  constraints.maxHeight < 620;
-                              return compact
-                                  ? _buildCompactLayout(constraints)
-                                  : _buildWideLayout();
-                            },
-                          ),
+            child: LayoutBuilder(
+              builder: (context, windowConstraints) {
+                final compactHeader = windowConstraints.maxWidth < 800;
+                final edge = windowConstraints.maxWidth < 700 ? 16.0 : 28.0;
+                return Padding(
+                  padding: EdgeInsets.all(edge),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      _buildHeader(compact: compactHeader),
+                      SizedBox(height: compactHeader ? 16 : 24),
+                      Expanded(
+                        child: _workspace == _Workspace.vault
+                            ? VaultPage(
+                                storage: _sampleStorage,
+                                onUseSample: _loadSample,
+                              )
+                            : LayoutBuilder(
+                                builder: (context, constraints) {
+                                  final compact =
+                                      constraints.maxWidth < 860 ||
+                                      constraints.maxHeight < 620;
+                                  return compact
+                                      ? _buildCompactLayout(constraints)
+                                      : _buildWideLayout();
+                                },
+                              ),
+                      ),
+                    ],
                   ),
-                ],
-              ),
+                );
+              },
             ),
           ),
         ],
@@ -372,8 +378,9 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
-  Widget _buildHeader() {
-    return Row(
+  Widget _buildHeader({required bool compact}) {
+    final brand = Row(
+      mainAxisSize: compact ? MainAxisSize.max : MainAxisSize.min,
       children: [
         Container(
           width: 42,
@@ -387,49 +394,79 @@ class _HomePageState extends State<HomePage> {
           child: const Icon(Icons.auto_awesome_rounded, color: Colors.white),
         ),
         const SizedBox(width: 13),
-        const Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text(
-              'Artist Tag Vault',
-              style: TextStyle(fontSize: 22, fontWeight: FontWeight.w700),
-            ),
-            Text(
-              'NovelAI artist-tag sample catalog',
-              style: TextStyle(color: Colors.white54, fontSize: 12),
-            ),
-          ],
+        const Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                'Artist Tag Vault',
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(fontSize: 22, fontWeight: FontWeight.w700),
+              ),
+              Text(
+                'NovelAI artist-tag sample catalog',
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(color: Colors.white54, fontSize: 12),
+              ),
+            ],
+          ),
         ),
-        const Spacer(),
-        SegmentedButton<_Workspace>(
-          segments: const [
-            ButtonSegment(
-              value: _Workspace.generate,
-              icon: Icon(Icons.auto_awesome_rounded),
-              label: Text('Generate'),
-            ),
-            ButtonSegment(
-              value: _Workspace.vault,
-              icon: Icon(Icons.photo_library_outlined),
-              label: Text('Vault'),
-            ),
-          ],
-          selected: {_workspace},
-          onSelectionChanged: (selection) =>
-              setState(() => _workspace = selection.first),
+      ],
+    );
+    final workspace = SegmentedButton<_Workspace>(
+      segments: const [
+        ButtonSegment(
+          value: _Workspace.generate,
+          icon: Icon(Icons.auto_awesome_rounded),
+          label: Text('Generate'),
         ),
+        ButtonSegment(
+          value: _Workspace.vault,
+          icon: Icon(Icons.photo_library_outlined),
+          label: Text('Vault'),
+        ),
+      ],
+      selected: {_workspace},
+      onSelectionChanged: (selection) =>
+          setState(() => _workspace = selection.first),
+    );
+    final actions = <Widget>[
+      IconButton.filledTonal(
+        tooltip: 'Open storage folder',
+        onPressed: _openFolder,
+        icon: const Icon(Icons.folder_open_rounded),
+      ),
+      const SizedBox(width: 8),
+      IconButton.filledTonal(
+        tooltip: 'Settings',
+        onPressed: _openSettings,
+        icon: const Icon(Icons.tune_rounded),
+      ),
+    ];
+
+    if (compact) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          brand,
+          const SizedBox(height: 12),
+          Row(
+            children: [
+              Expanded(child: workspace),
+              const SizedBox(width: 12),
+              ...actions,
+            ],
+          ),
+        ],
+      );
+    }
+
+    return Row(
+      children: [
+        Expanded(child: brand),
+        workspace,
         const SizedBox(width: 12),
-        IconButton.filledTonal(
-          tooltip: 'Open storage folder',
-          onPressed: _openFolder,
-          icon: const Icon(Icons.folder_open_rounded),
-        ),
-        const SizedBox(width: 8),
-        IconButton.filledTonal(
-          tooltip: 'Settings',
-          onPressed: _openSettings,
-          icon: const Icon(Icons.tune_rounded),
-        ),
+        ...actions,
       ],
     );
   }

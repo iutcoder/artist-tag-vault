@@ -26,6 +26,7 @@ class VaultPage extends StatefulWidget {
 class _VaultPageState extends State<VaultPage> {
   final _search = TextEditingController();
   final _transform = TransformationController();
+  final _pageScroll = ScrollController();
   List<SavedSample> _samples = const [];
   bool _loading = true;
   bool _deleting = false;
@@ -58,6 +59,7 @@ class _VaultPageState extends State<VaultPage> {
   void dispose() {
     _search.dispose();
     _transform.dispose();
+    _pageScroll.dispose();
     _wheelResetTimer?.cancel();
     _navigationCueTimer?.cancel();
     super.dispose();
@@ -504,20 +506,47 @@ class _VaultPageState extends State<VaultPage> {
 
     return LayoutBuilder(
       builder: (context, constraints) {
-        final wideInfo = constraints.maxWidth >= 1080;
-        return Row(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            SizedBox(width: 240, child: _buildCatalog()),
-            const SizedBox(width: 16),
-            Expanded(child: _buildViewer(wideInfo: wideInfo)),
-            if (wideInfo && _showInfo) ...[
-              const SizedBox(width: 16),
-              SizedBox(width: 340, child: _buildInfo()),
-            ],
-          ],
+        final compact = constraints.maxWidth < 720;
+        final minimumHeight = compact ? 920.0 : 460.0;
+        final contentHeight = math.max(constraints.maxHeight, minimumHeight);
+        return Scrollbar(
+          controller: _pageScroll,
+          thumbVisibility: constraints.maxHeight < minimumHeight,
+          child: SingleChildScrollView(
+            controller: _pageScroll,
+            padding: const EdgeInsets.only(right: 10),
+            child: SizedBox(
+              height: contentHeight,
+              child: compact
+                  ? Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        SizedBox(height: 330, child: _buildCatalog()),
+                        const SizedBox(height: 16),
+                        Expanded(child: _buildViewer(wideInfo: false)),
+                      ],
+                    )
+                  : _buildWideVault(constraints.maxWidth),
+            ),
+          ),
         );
       },
+    );
+  }
+
+  Widget _buildWideVault(double width) {
+    final wideInfo = width >= 1080;
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        SizedBox(width: 240, child: _buildCatalog()),
+        const SizedBox(width: 16),
+        Expanded(child: _buildViewer(wideInfo: wideInfo)),
+        if (wideInfo && _showInfo) ...[
+          const SizedBox(width: 16),
+          SizedBox(width: 340, child: _buildInfo()),
+        ],
+      ],
     );
   }
 
@@ -728,61 +757,7 @@ class _VaultPageState extends State<VaultPage> {
             ),
           ),
           const SizedBox(height: 8),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              IconButton(
-                tooltip: 'Previous image',
-                onPressed: sample == null || _artistSamples.indexOf(sample) <= 0
-                    ? null
-                    : () => _moveSelection(-1, showCue: true),
-                icon: const Icon(Icons.chevron_left_rounded),
-              ),
-              SizedBox(
-                width: 54,
-                child: Text(
-                  sample == null
-                      ? '0 / 0'
-                      : '${_artistSamples.indexOf(sample) + 1} / ${_artistSamples.length}',
-                  textAlign: TextAlign.center,
-                ),
-              ),
-              IconButton(
-                tooltip: 'Next image',
-                onPressed:
-                    sample == null ||
-                        _artistSamples.indexOf(sample) >=
-                            _artistSamples.length - 1
-                    ? null
-                    : () => _moveSelection(1, showCue: true),
-                icon: const Icon(Icons.chevron_right_rounded),
-              ),
-              const SizedBox(width: 12),
-              const SizedBox(
-                height: 22,
-                child: VerticalDivider(width: 1, thickness: 1),
-              ),
-              const SizedBox(width: 12),
-              IconButton(
-                tooltip: 'Zoom out',
-                onPressed: sample == null ? null : () => _zoom(.8),
-                icon: const Icon(Icons.remove_rounded),
-              ),
-              TextButton(
-                onPressed: sample == null ? null : _fit,
-                child: const Text('Fit'),
-              ),
-              TextButton(
-                onPressed: sample == null ? null : _oneToOne,
-                child: const Text('1:1'),
-              ),
-              IconButton(
-                tooltip: 'Zoom in',
-                onPressed: sample == null ? null : () => _zoom(1.25),
-                icon: const Icon(Icons.add_rounded),
-              ),
-            ],
-          ),
+          _buildViewerControls(sample),
           if (_artistSamples.length > 1) ...[
             const SizedBox(height: 6),
             SizedBox(
@@ -816,6 +791,87 @@ class _VaultPageState extends State<VaultPage> {
           ],
         ],
       ),
+    );
+  }
+
+  Widget _buildViewerControls(SavedSample? sample) {
+    final index = sample == null ? -1 : _artistSamples.indexOf(sample);
+    final navigation = Row(
+      mainAxisSize: MainAxisSize.min,
+      mainAxisAlignment: MainAxisAlignment.center,
+      children: [
+        IconButton(
+          tooltip: 'Previous image',
+          onPressed: index <= 0
+              ? null
+              : () => _moveSelection(-1, showCue: true),
+          icon: const Icon(Icons.chevron_left_rounded),
+        ),
+        SizedBox(
+          width: 54,
+          child: Text(
+            sample == null
+                ? '0 / 0'
+                : '${index + 1} / ${_artistSamples.length}',
+            textAlign: TextAlign.center,
+          ),
+        ),
+        IconButton(
+          tooltip: 'Next image',
+          onPressed: index < 0 || index >= _artistSamples.length - 1
+              ? null
+              : () => _moveSelection(1, showCue: true),
+          icon: const Icon(Icons.chevron_right_rounded),
+        ),
+      ],
+    );
+    final zoom = Row(
+      mainAxisSize: MainAxisSize.min,
+      mainAxisAlignment: MainAxisAlignment.center,
+      children: [
+        IconButton(
+          tooltip: 'Zoom out',
+          onPressed: sample == null ? null : () => _zoom(.8),
+          icon: const Icon(Icons.remove_rounded),
+        ),
+        TextButton(
+          onPressed: sample == null ? null : _fit,
+          child: const Text('Fit'),
+        ),
+        TextButton(
+          onPressed: sample == null ? null : _oneToOne,
+          child: const Text('1:1'),
+        ),
+        IconButton(
+          tooltip: 'Zoom in',
+          onPressed: sample == null ? null : () => _zoom(1.25),
+          icon: const Icon(Icons.add_rounded),
+        ),
+      ],
+    );
+
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        if (constraints.maxWidth < 400) {
+          return Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [navigation, zoom],
+          );
+        }
+        return Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            navigation,
+            const SizedBox(width: 12),
+            const SizedBox(
+              height: 22,
+              child: VerticalDivider(width: 1, thickness: 1),
+            ),
+            const SizedBox(width: 12),
+            zoom,
+          ],
+        );
+      },
     );
   }
 
