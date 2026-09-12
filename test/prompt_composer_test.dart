@@ -26,7 +26,18 @@ void main() {
         presetPrompt: '1girl, solo',
         artistWeight: 1.5,
       ),
-      '1.50::artist:sample_artist::, 1girl, solo',
+      '1.50:: artist:sample_artist ::, 1girl, solo',
+    );
+  });
+
+  test('numeric emphasis separates an artist name ending in digits', () {
+    expect(
+      PromptComposer.compose(
+        artist: 'artist:ratatatat74',
+        presetPrompt: '',
+        artistWeight: -1,
+      ),
+      '-1.00:: artist:ratatatat74 ::',
     );
   });
 
@@ -37,7 +48,7 @@ void main() {
         presetPrompt: '',
         artistWeight: -0.25,
       ),
-      '-0.25::artist:sample_artist::',
+      '-0.25:: artist:sample_artist ::',
     );
   });
 }

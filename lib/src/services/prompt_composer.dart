@@ -18,7 +18,7 @@ class PromptComposer {
     final plainArtistTag = 'artist:$withoutPrefix';
     final artistTag = (artistWeight - 1).abs() < 0.000001
         ? plainArtistTag
-        : '${artistWeight.toStringAsFixed(2)}::$plainArtistTag::';
+        : '${artistWeight.toStringAsFixed(2)}:: $plainArtistTag ::';
     final preset = presetPrompt.trim();
     return preset.isEmpty ? artistTag : '$artistTag, $preset';
   }
