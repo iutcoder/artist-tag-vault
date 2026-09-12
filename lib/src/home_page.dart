@@ -4,14 +4,20 @@ import 'dart:math';
 
 import 'package:artist_tag_vault/src/models/account_usage.dart';
 import 'package:artist_tag_vault/src/models/app_settings.dart';
+import 'package:artist_tag_vault/src/models/generation_preset.dart';
+import 'package:artist_tag_vault/src/models/saved_sample.dart';
 import 'package:artist_tag_vault/src/services/novelai_api.dart';
 import 'package:artist_tag_vault/src/services/prompt_composer.dart';
 import 'package:artist_tag_vault/src/services/sample_storage.dart';
 import 'package:artist_tag_vault/src/services/settings_store.dart';
 import 'package:artist_tag_vault/src/settings_dialog.dart';
+import 'package:artist_tag_vault/src/vault_page.dart';
 import 'package:artist_tag_vault/src/widgets/glass_panel.dart';
 import 'package:artist_tag_vault/src/widgets/numeric_stepper_field.dart';
 import 'package:flutter/material.dart';
+import 'package:path/path.dart' as path;
+
+enum _Workspace { generate, vault }
 
 /// Main artist entry, generation action, and latest-sample preview.
 class HomePage extends StatefulWidget {
@@ -25,6 +31,8 @@ class _HomePageState extends State<HomePage> {
   static const int _maximumSeed = 0xffffffff;
 
   final _artistController = TextEditingController();
+  final _promptController = TextEditingController();
+  final _undesiredController = TextEditingController();
   final _settingsStore = SettingsStore();
   final _api = NovelAiApi();
   final _sampleStorage = SampleStorage();
@@ -35,6 +43,8 @@ class _HomePageState extends State<HomePage> {
   String _status = 'Enter an artist name to create a standardized sample.';
   bool _busy = false;
   bool _previewExpanded = true;
+  bool _advancedExpanded = false;
+  _Workspace _workspace = _Workspace.generate;
   AccountUsage? _accountUsage;
   bool _usageLoading = false;
   String? _usageError;
@@ -46,12 +56,17 @@ class _HomePageState extends State<HomePage> {
   void initState() {
     super.initState();
     _seed = _createRandomSeed();
+    final defaults = GenerationPreset.defaults();
+    _promptController.text = defaults.prompt;
+    _undesiredController.text = defaults.undesiredContent;
     _loadSettings();
   }
 
   @override
   void dispose() {
     _artistController.dispose();
+    _promptController.dispose();
+    _undesiredController.dispose();
     super.dispose();
   }
 
@@ -59,7 +74,11 @@ class _HomePageState extends State<HomePage> {
     try {
       final loaded = await _settingsStore.load();
       if (!mounted) return;
-      setState(() => _settings = loaded);
+      setState(() {
+        _settings = loaded;
+        _promptController.text = loaded.preset.prompt;
+        _undesiredController.text = loaded.preset.undesiredContent;
+      });
       if (loaded.apiToken.isNotEmpty) unawaited(_refreshUsage());
     } on SettingsStoreException catch (error) {
       if (mounted) _showError(error.message);
@@ -69,10 +88,8 @@ class _HomePageState extends State<HomePage> {
   Future<void> _openSettings() async {
     final updated = await showDialog<AppSettings>(
       context: context,
-      builder: (context) => SettingsDialog(
-        initialSettings: _settings,
-        api: _api,
-      ),
+      builder: (context) =>
+          SettingsDialog(initialSettings: _settings, api: _api),
     );
     if (updated == null) return;
 
@@ -81,7 +98,7 @@ class _HomePageState extends State<HomePage> {
       if (!mounted) return;
       setState(() {
         _settings = updated;
-        _status = 'Preset saved.';
+        _status = 'App settings saved.';
       });
       unawaited(_refreshUsage());
     } on SettingsStoreException catch (error) {
@@ -121,11 +138,13 @@ class _HomePageState extends State<HomePage> {
     // seed remains unchanged so artists can be compared under the same noise.
     final requestSeed = _seedLocked ? _seed : _createRandomSeed();
 
-    final prompt = PromptComposer.compose(
+    final artistPrompt = PromptComposer.compose(
       artist: artist,
       presetPrompt: _settings.preset.prompt,
       artistWeight: _artistWeight,
     );
+    final prompt = _settings.preset.composePrompt(artistPrompt);
+    final negativePrompt = _settings.preset.composedUndesiredContent;
     setState(() {
       _busy = true;
       _seed = requestSeed;
@@ -136,6 +155,7 @@ class _HomePageState extends State<HomePage> {
       final generated = await _api.generate(
         token: _settings.apiToken,
         prompt: prompt,
+        negativePrompt: negativePrompt,
         preset: _settings.preset,
         seed: requestSeed,
       );
@@ -143,6 +163,7 @@ class _HomePageState extends State<HomePage> {
         bytes: generated.bytes,
         artist: artist,
         composedPrompt: prompt,
+        composedUndesiredContent: negativePrompt,
         seed: generated.seed,
         artistWeight: _artistWeight,
         preset: _settings.preset,
@@ -158,14 +179,6 @@ class _HomePageState extends State<HomePage> {
       if (mounted) _showError(error.toString());
     } finally {
       if (mounted) setState(() => _busy = false);
-    }
-  }
-
-  Future<void> _openFolder() async {
-    try {
-      await _sampleStorage.openRootDirectory();
-    } on Exception catch (error) {
-      if (mounted) _showError(error.toString());
     }
   }
 
@@ -199,17 +212,68 @@ class _HomePageState extends State<HomePage> {
     }
   }
 
+  Future<void> _openFolder() async {
+    try {
+      await _sampleStorage.openRootDirectory();
+    } on Exception catch (error) {
+      if (mounted) _showError(error.toString());
+    }
+  }
+
   void _showError(String message) {
     setState(() => _status = message);
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(message)),
-    );
+    ScaffoldMessenger.of(context)
+        .showSnackBar(SnackBar(content: Text(message)));
   }
 
   int _createRandomSeed() {
     // Joining two 16-bit values covers NovelAI's unsigned 32-bit seed range
     // without relying on a platform-specific nextInt upper-bound behavior.
     return (_random.nextInt(1 << 16) << 16) | _random.nextInt(1 << 16);
+  }
+
+  void _updatePreset(GenerationPreset preset) {
+    setState(() => _settings = _settings.copyWith(preset: preset));
+  }
+
+  Future<void> _savePreset() async {
+    try {
+      await _settingsStore.save(_settings);
+      if (mounted)
+        setState(() => _status = 'Generation preset saved as default.');
+    } on SettingsStoreException catch (error) {
+      if (mounted) _showError(error.message);
+    }
+  }
+
+  void _resetPreset() {
+    final defaults = GenerationPreset.defaults();
+    setState(() {
+      _settings = _settings.copyWith(preset: defaults);
+      _promptController.text = defaults.prompt;
+      _undesiredController.text = defaults.undesiredContent;
+      _status = 'Generation preset reset. Save as default to keep it.';
+    });
+  }
+
+  void _loadSample(SavedSample sample) {
+    final rawPreset = sample.metadata['preset'];
+    final preset = rawPreset is Map<String, dynamic>
+        ? GenerationPreset.fromJson(rawPreset)
+        : _settings.preset;
+    setState(() {
+      _workspace = _Workspace.generate;
+      _settings = _settings.copyWith(preset: preset);
+      _artistController.text = sample.artist;
+      _promptController.text = preset.prompt;
+      _undesiredController.text = preset.undesiredContent;
+      _seed = sample.seed ?? _seed;
+      _seedLocked = sample.seed != null;
+      _artistWeight =
+          (sample.metadata['artistWeight'] as num?)?.toDouble() ?? 1;
+      _advancedExpanded = true;
+      _status = 'Loaded settings from ${path.basename(sample.file.path)}';
+    });
   }
 
   @override
@@ -227,14 +291,19 @@ class _HomePageState extends State<HomePage> {
                   _buildHeader(),
                   const SizedBox(height: 24),
                   Expanded(
-                    child: LayoutBuilder(
-                      builder: (context, constraints) {
-                        final compact = constraints.maxWidth < 860;
-                        return compact
-                            ? _buildCompactLayout()
-                            : _buildWideLayout();
-                      },
-                    ),
+                    child: _workspace == _Workspace.vault
+                        ? VaultPage(
+                            storage: _sampleStorage,
+                            onUseSample: _loadSample,
+                          )
+                        : LayoutBuilder(
+                            builder: (context, constraints) {
+                              final compact = constraints.maxWidth < 860;
+                              return compact
+                                  ? _buildCompactLayout()
+                                  : _buildWideLayout();
+                            },
+                          ),
                   ),
                 ],
               ),
@@ -271,7 +340,7 @@ class _HomePageState extends State<HomePage> {
     return Row(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        SizedBox(width: 370, child: _buildControls()),
+        SizedBox(width: _advancedExpanded ? 450 : 370, child: _buildControls()),
         const SizedBox(width: 22),
         if (_previewExpanded)
           Expanded(child: _buildPreview(compact: false))
@@ -310,8 +379,26 @@ class _HomePageState extends State<HomePage> {
           ],
         ),
         const Spacer(),
+        SegmentedButton<_Workspace>(
+          segments: const [
+            ButtonSegment(
+              value: _Workspace.generate,
+              icon: Icon(Icons.auto_awesome_rounded),
+              label: Text('Generate'),
+            ),
+            ButtonSegment(
+              value: _Workspace.vault,
+              icon: Icon(Icons.photo_library_outlined),
+              label: Text('Vault'),
+            ),
+          ],
+          selected: {_workspace},
+          onSelectionChanged: (selection) =>
+              setState(() => _workspace = selection.first),
+        ),
+        const SizedBox(width: 12),
         IconButton.filledTonal(
-          tooltip: 'Open saved samples',
+          tooltip: 'Open storage folder',
           onPressed: _openFolder,
           icon: const Icon(Icons.folder_open_rounded),
         ),
@@ -327,12 +414,10 @@ class _HomePageState extends State<HomePage> {
 
   Widget _buildControls() {
     return GlassPanel(
-      // A short desktop window must scroll instead of producing a RenderFlex
-      // overflow stripe at the bottom of the preset summary.
-      child: SingleChildScrollView(
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
+      padding: const EdgeInsets.all(20),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
           Text(
             'CREATE SAMPLE',
             style: TextStyle(
@@ -366,8 +451,7 @@ class _HomePageState extends State<HomePage> {
                   decimalPlaces: 0,
                   enabled: !_busy,
                   labelText: 'Seed',
-                  onChanged: (value) =>
-                      setState(() => _seed = value.round()),
+                  onChanged: (value) => setState(() => _seed = value.round()),
                 ),
               ),
               const SizedBox(width: 8),
@@ -375,19 +459,19 @@ class _HomePageState extends State<HomePage> {
                 tooltip: _seedLocked ? 'Unlock seed' : 'Lock seed',
                 style: _seedLocked
                     ? IconButton.styleFrom(
-                        backgroundColor:
-                            Theme.of(context).colorScheme.primaryContainer,
-                        foregroundColor:
-                            Theme.of(context).colorScheme.onPrimaryContainer,
+                        backgroundColor: Theme.of(context)
+                            .colorScheme
+                            .primaryContainer,
+                        foregroundColor: Theme.of(context)
+                            .colorScheme
+                            .onPrimaryContainer,
                       )
                     : null,
                 onPressed: _busy
                     ? null
                     : () => setState(() => _seedLocked = !_seedLocked),
                 icon: Icon(
-                  _seedLocked
-                      ? Icons.lock_rounded
-                      : Icons.lock_open_rounded,
+                  _seedLocked ? Icons.lock_rounded : Icons.lock_open_rounded,
                 ),
               ),
             ],
@@ -418,38 +502,335 @@ class _HomePageState extends State<HomePage> {
             label: Text(_busy ? 'Generating…' : 'Generate & Save'),
           ),
           const SizedBox(height: 12),
-          _UsageCard(
-            usage: _accountUsage,
-            loading: _usageLoading,
-            error: _usageError,
-            showV5Allowance: _settings.preset.model.isV5,
-            mayConsumeAnlas: _settings.preset.exceedsNormalFreeBoundary,
-            onRefresh: _usageLoading ? null : _refreshUsage,
+          Expanded(
+            child: SingleChildScrollView(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  _buildAdvanced(),
+                  const SizedBox(height: 12),
+                  _UsageCard(
+                    usage: _accountUsage,
+                    loading: _usageLoading,
+                    error: _usageError,
+                    showV5Allowance: _settings.preset.model.isV5,
+                    mayConsumeAnlas: _settings.preset.exceedsNormalFreeBoundary,
+                    onRefresh: _usageLoading ? null : _refreshUsage,
+                  ),
+                  const SizedBox(height: 14),
+                  Text(
+                    _status,
+                    maxLines: 3,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(color: Colors.white60, fontSize: 12),
+                  ),
+                ],
+              ),
+            ),
           ),
-          const SizedBox(height: 22),
-          const Divider(),
-          const SizedBox(height: 14),
-          _PresetLine('Model', _settings.preset.model.label),
-          _PresetLine('Steps', _settings.preset.steps.toString()),
-          _PresetLine('Guidance', _settings.preset.guidance.toString()),
-          _PresetLine('Sampler', _settings.preset.sampler.label),
-          _PresetLine('Schedule', _settings.preset.noiseSchedule.label),
-          _PresetLine(
-            'Canvas',
-            '${_settings.preset.aspectRatio.ratioLabel} · '
-                '${_settings.preset.dimensions.label}',
-          ),
-          const SizedBox(height: 20),
-          Text(
-            _status,
-            maxLines: 3,
-            overflow: TextOverflow.ellipsis,
-            style: const TextStyle(color: Colors.white60, fontSize: 12),
-          ),
-          ],
-        ),
+        ],
       ),
     );
+  }
+
+  Widget _buildAdvanced() {
+    final preset = _settings.preset;
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.035),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: Colors.white.withValues(alpha: 0.09)),
+      ),
+      child: ExpansionTile(
+        key: ValueKey(_advancedExpanded),
+        initiallyExpanded: _advancedExpanded,
+        onExpansionChanged: (value) =>
+            setState(() => _advancedExpanded = value),
+        tilePadding: const EdgeInsets.symmetric(horizontal: 14),
+        childrenPadding: const EdgeInsets.fromLTRB(14, 0, 14, 14),
+        title: const Text(
+          'ADVANCED',
+          style: TextStyle(
+            fontSize: 11,
+            letterSpacing: 1.2,
+            fontWeight: FontWeight.w700,
+            color: Colors.white60,
+          ),
+        ),
+        subtitle: Text(
+          '${preset.model.label.replaceFirst('NovelAI Diffusion ', '')} · '
+          '${preset.steps} steps · ${preset.dimensions.label}',
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+          style: const TextStyle(color: Colors.white38, fontSize: 10),
+        ),
+        children: [
+          DropdownButtonFormField<NovelAiModel>(
+            value: preset.model,
+            isExpanded: true,
+            decoration: const InputDecoration(labelText: 'Version'),
+            items: NovelAiModel.values
+                .map(
+                  (model) =>
+                      DropdownMenuItem(value: model, child: Text(model.label)),
+                )
+                .toList(),
+            onChanged: _busy ? null : (value) => _changeModel(value),
+          ),
+          const SizedBox(height: 10),
+          Row(
+            children: [
+              Expanded(
+                child: DropdownButtonFormField<QualityTagPreset>(
+                  value: preset.qualityTagPreset,
+                  decoration: const InputDecoration(
+                    labelText: 'Automatic quality',
+                  ),
+                  items: preset.availableQualityTagPresets
+                      .map(
+                        (value) => DropdownMenuItem(
+                          value: value,
+                          child: Text(value.label),
+                        ),
+                      )
+                      .toList(),
+                  onChanged: _busy
+                      ? null
+                      : (value) {
+                          if (value != null) {
+                            _updatePreset(
+                              preset.copyWith(qualityTagPreset: value),
+                            );
+                          }
+                        },
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: DropdownButtonFormField<UndesiredContentPreset>(
+                  value: preset.undesiredContentPreset,
+                  isExpanded: true,
+                  decoration: const InputDecoration(
+                    labelText: 'Negative preset',
+                  ),
+                  items: preset.availableUndesiredContentPresets
+                      .map(
+                        (value) => DropdownMenuItem(
+                          value: value,
+                          child: Text(value.label),
+                        ),
+                      )
+                      .toList(),
+                  onChanged: _busy
+                      ? null
+                      : (value) {
+                          if (value != null) {
+                            _updatePreset(
+                              preset.copyWith(undesiredContentPreset: value),
+                            );
+                          }
+                        },
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          Row(
+            children: [
+              Expanded(
+                child: DropdownButtonFormField<ImageAspectRatioPreset>(
+                  value: preset.aspectRatio,
+                  decoration: const InputDecoration(labelText: 'Image ratio'),
+                  items: ImageAspectRatioPreset.values
+                      .map(
+                        (value) => DropdownMenuItem(
+                          value: value,
+                          child: Text('${value.label} · ${value.ratioLabel}'),
+                        ),
+                      )
+                      .toList(),
+                  onChanged: _busy
+                      ? null
+                      : (value) {
+                          if (value != null) {
+                            _updatePreset(preset.copyWith(aspectRatio: value));
+                          }
+                        },
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: DropdownButtonFormField<ImageResolutionPreset>(
+                  value: preset.resolution,
+                  decoration: const InputDecoration(labelText: 'Resolution'),
+                  items: ImageResolutionPreset.values
+                      .map(
+                        (value) => DropdownMenuItem(
+                          value: value,
+                          child: Text(value.label),
+                        ),
+                      )
+                      .toList(),
+                  onChanged: _busy
+                      ? null
+                      : (value) {
+                          if (value != null) {
+                            _updatePreset(preset.copyWith(resolution: value));
+                          }
+                        },
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 5),
+          Align(
+            alignment: Alignment.centerRight,
+            child: Text(
+              'Canvas · ${preset.dimensions.label}',
+              style: const TextStyle(color: Colors.white38, fontSize: 11),
+            ),
+          ),
+          _SliderSettingRow(
+            label: 'Steps',
+            value: preset.steps.toDouble(),
+            minimum: GenerationPreset.minimumSteps.toDouble(),
+            maximum: GenerationPreset.maximumSteps.toDouble(),
+            divisions: 49,
+            step: 1,
+            decimalPlaces: 0,
+            enabled: !_busy,
+            onChanged: (value) =>
+                _updatePreset(preset.copyWith(steps: value.round())),
+          ),
+          _SliderSettingRow(
+            label: 'Guidance',
+            value: preset.guidance,
+            minimum: GenerationPreset.minimumGuidance,
+            maximum: GenerationPreset.maximumGuidance,
+            divisions: 100,
+            step: .1,
+            decimalPlaces: 2,
+            enabled: !_busy,
+            onChanged: (value) =>
+                _updatePreset(preset.copyWith(guidance: value)),
+          ),
+          _SliderSettingRow(
+            label: 'Rescale',
+            value: preset.guidanceRescale,
+            minimum: GenerationPreset.minimumGuidanceRescale,
+            maximum: GenerationPreset.maximumGuidanceRescale,
+            divisions: 100,
+            step: .01,
+            decimalPlaces: 2,
+            enabled: !_busy,
+            onChanged: (value) =>
+                _updatePreset(preset.copyWith(guidanceRescale: value)),
+          ),
+          Row(
+            children: [
+              Expanded(
+                child: DropdownButtonFormField<NovelAiSampler>(
+                  value: preset.sampler,
+                  decoration: const InputDecoration(labelText: 'Sampler'),
+                  items: NovelAiSampler.values
+                      .map(
+                        (value) => DropdownMenuItem(
+                          value: value,
+                          child: Text(value.label),
+                        ),
+                      )
+                      .toList(),
+                  onChanged: _busy
+                      ? null
+                      : (value) {
+                          if (value != null) {
+                            _updatePreset(preset.copyWith(sampler: value));
+                          }
+                        },
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: DropdownButtonFormField<NoiseSchedule>(
+                  value: preset.noiseSchedule,
+                  decoration: const InputDecoration(labelText: 'Schedule'),
+                  items: NoiseSchedule.values
+                      .map(
+                        (value) => DropdownMenuItem(
+                          value: value,
+                          child: Text(value.label),
+                        ),
+                      )
+                      .toList(),
+                  onChanged: _busy
+                      ? null
+                      : (value) {
+                          if (value != null) {
+                            _updatePreset(
+                              preset.copyWith(noiseSchedule: value),
+                            );
+                          }
+                        },
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          TextField(
+            controller: _promptController,
+            enabled: !_busy,
+            minLines: 3,
+            maxLines: 5,
+            decoration: const InputDecoration(labelText: 'Preset prompt'),
+            onChanged: (value) =>
+                _updatePreset(preset.copyWith(prompt: value.trim())),
+          ),
+          const SizedBox(height: 10),
+          TextField(
+            controller: _undesiredController,
+            enabled: !_busy,
+            minLines: 3,
+            maxLines: 5,
+            decoration: const InputDecoration(
+              labelText: 'Additional undesired content',
+            ),
+            onChanged: (value) =>
+                _updatePreset(preset.copyWith(undesiredContent: value.trim())),
+          ),
+          const SizedBox(height: 10),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.end,
+            children: [
+              TextButton(
+                onPressed: _busy ? null : _resetPreset,
+                child: const Text('Reset'),
+              ),
+              const SizedBox(width: 8),
+              FilledButton.tonal(
+                onPressed: _busy ? null : _savePreset,
+                child: const Text('Save as default'),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _changeModel(NovelAiModel? model) {
+    if (model == null) return;
+    var preset = _settings.preset.copyWith(model: model);
+    if (!preset.availableQualityTagPresets.contains(preset.qualityTagPreset)) {
+      preset = preset.copyWith(qualityTagPreset: QualityTagPreset.standard);
+    }
+    if (!preset.availableUndesiredContentPresets.contains(
+      preset.undesiredContentPreset,
+    )) {
+      preset = preset.copyWith(
+        undesiredContentPreset: UndesiredContentPreset.heavy,
+      );
+    }
+    _updatePreset(preset);
   }
 
   Widget _buildPreview({required bool compact}) {
@@ -586,8 +967,8 @@ class _UsageCard extends StatelessWidget {
               mayConsumeAnlas
                   ? 'Large canvas or more than 28 steps may consume Anlas.'
                   : showV5Allowance
-                      ? 'V5 uses its allowance first when generation is eligible.'
-                      : 'Charge depends on your subscription conditions.',
+                  ? 'V5 uses its allowance first when generation is eligible.'
+                  : 'Charge depends on your subscription conditions.',
               style: TextStyle(
                 color: mayConsumeAnlas ? Colors.amberAccent : Colors.white38,
                 fontSize: 10,
@@ -687,11 +1068,11 @@ class _PreviewHeader extends StatelessWidget {
       icon: Icon(
         compact
             ? (expanded
-                ? Icons.keyboard_arrow_up_rounded
-                : Icons.keyboard_arrow_down_rounded)
+                  ? Icons.keyboard_arrow_up_rounded
+                  : Icons.keyboard_arrow_down_rounded)
             : (expanded
-                ? Icons.chevron_right_rounded
-                : Icons.chevron_left_rounded),
+                  ? Icons.chevron_right_rounded
+                  : Icons.chevron_left_rounded),
       ),
     );
 
@@ -740,27 +1121,60 @@ class _PreviewHeader extends StatelessWidget {
   }
 }
 
-class _PresetLine extends StatelessWidget {
-  const _PresetLine(this.label, this.value);
+class _SliderSettingRow extends StatelessWidget {
+  const _SliderSettingRow({
+    required this.label,
+    required this.value,
+    required this.minimum,
+    required this.maximum,
+    required this.divisions,
+    required this.step,
+    required this.decimalPlaces,
+    required this.enabled,
+    required this.onChanged,
+  });
+
   final String label;
-  final String value;
+  final double value;
+  final double minimum;
+  final double maximum;
+  final int divisions;
+  final double step;
+  final int decimalPlaces;
+  final bool enabled;
+  final ValueChanged<double> onChanged;
 
   @override
   Widget build(BuildContext context) {
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 5),
+      padding: const EdgeInsets.symmetric(vertical: 4),
       child: Row(
         children: [
           SizedBox(
-            width: 78,
-            child: Text(label, style: const TextStyle(color: Colors.white38)),
+            width: 72,
+            child: Text(label, style: const TextStyle(color: Colors.white70)),
           ),
           Expanded(
-            child: Text(
-              value,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              textAlign: TextAlign.right,
+            child: Slider(
+              value: value.clamp(minimum, maximum).toDouble(),
+              min: minimum,
+              max: maximum,
+              divisions: divisions,
+              label: value.toStringAsFixed(decimalPlaces),
+              onChanged: enabled ? onChanged : null,
+            ),
+          ),
+          const SizedBox(width: 6),
+          SizedBox(
+            width: 94,
+            child: NumericStepperField(
+              value: value,
+              minimum: minimum,
+              maximum: maximum,
+              step: step,
+              decimalPlaces: decimalPlaces,
+              enabled: enabled,
+              onChanged: onChanged,
             ),
           ),
         ],
@@ -782,8 +1196,10 @@ class _EmptyPreview extends StatelessWidget {
           children: [
             Icon(Icons.image_outlined, size: 58, color: Colors.white24),
             SizedBox(height: 13),
-            Text('Generated image preview',
-                style: TextStyle(color: Colors.white38)),
+            Text(
+              'Generated image preview',
+              style: TextStyle(color: Colors.white38),
+            ),
           ],
         ),
       ),

@@ -17,10 +17,12 @@ class GeneratedImage {
 class NovelAiApi {
   NovelAiApi({http.Client? client}) : _client = client ?? http.Client();
 
-  static final Uri _generationUri =
-      Uri.parse('https://image.novelai.net/ai/generate-image');
-  static final Uri _subscriptionUri =
-      Uri.parse('https://image.novelai.net/user/subscription');
+  static final Uri _generationUri = Uri.parse(
+    'https://image.novelai.net/ai/generate-image',
+  );
+  static final Uri _subscriptionUri = Uri.parse(
+    'https://image.novelai.net/user/subscription',
+  );
 
   final http.Client _client;
 
@@ -31,18 +33,14 @@ class NovelAiApi {
     }
 
     try {
-      final response = await _client.get(
-        _subscriptionUri,
-        headers: _headers(token),
-      ).timeout(const Duration(seconds: 20));
+      final response = await _client
+          .get(_subscriptionUri, headers: _headers(token))
+          .timeout(const Duration(seconds: 20));
 
       return switch (response.statusCode) {
         200 => const TokenTestResult(true, 'NovelAI 연결에 성공했습니다.'),
         401 => const TokenTestResult(false, '토큰이 유효하지 않습니다.'),
-        _ => TokenTestResult(
-            false,
-            '연결 확인 실패 (HTTP ${response.statusCode})',
-          ),
+        _ => TokenTestResult(false, '연결 확인 실패 (HTTP ${response.statusCode})'),
       };
     } on Exception catch (error) {
       return TokenTestResult(false, '네트워크 오류: $error');
@@ -55,10 +53,9 @@ class NovelAiApi {
       throw const NovelAiApiException('NovelAI API 토큰이 없습니다.');
     }
 
-    final response = await _client.get(
-      _subscriptionUri,
-      headers: _headers(token),
-    ).timeout(const Duration(seconds: 20));
+    final response = await _client
+        .get(_subscriptionUri, headers: _headers(token))
+        .timeout(const Duration(seconds: 20));
 
     if (response.statusCode < 200 || response.statusCode >= 300) {
       throw NovelAiApiException(_readError(response));
@@ -76,6 +73,7 @@ class NovelAiApi {
   Future<GeneratedImage> generate({
     required String token,
     required String prompt,
+    required String negativePrompt,
     required GenerationPreset preset,
     required int seed,
   }) async {
@@ -91,9 +89,16 @@ class NovelAiApi {
       'seed': seed,
       'n_samples': 1,
       'prompt': prompt,
-      'negative_prompt': preset.undesiredContent,
+      'negative_prompt': negativePrompt,
+      'qualityToggle': preset.qualityTagPreset != QualityTagPreset.off,
+      'ucPreset': preset.undesiredContentPreset.apiCodeFor(preset.model),
       'image_format': 'png',
     };
+
+    if (preset.model.isV5 &&
+        preset.qualityTagPreset == QualityTagPreset.standard) {
+      parameters['tag_hint_qt'] = 1;
+    }
 
     // V4+ structured captions are part of the public request schema. Character
     // captions stay empty because this app deliberately compares one base tag.
@@ -106,7 +111,7 @@ class NovelAiApi {
         },
         'v4_negative_prompt': {
           'caption': {
-            'base_caption': preset.undesiredContent,
+            'base_caption': negativePrompt,
             'char_captions': <Object>[],
           },
           'legacy_uc': false,
@@ -133,10 +138,13 @@ class NovelAiApi {
 
     try {
       final decoded = jsonDecode(utf8.decode(response.bodyBytes));
-      final images = (decoded as Map<String, dynamic>)['images'] as List<dynamic>;
+      final images =
+          (decoded as Map<String, dynamic>)['images'] as List<dynamic>;
       final image = images.first as Map<String, dynamic>;
       final encoded = image['image'] as String;
-      final base64Value = encoded.contains(',') ? encoded.split(',').last : encoded;
+      final base64Value = encoded.contains(',')
+          ? encoded.split(',').last
+          : encoded;
       return GeneratedImage(
         bytes: base64Decode(base64Value),
         seed: (image['seed'] as num?)?.toInt() ?? seed,
@@ -147,10 +155,10 @@ class NovelAiApi {
   }
 
   Map<String, String> _headers(String token) => {
-        'Authorization': 'Bearer ${token.trim()}',
-        'Content-Type': 'application/json',
-        'Accept': 'application/json',
-      };
+    'Authorization': 'Bearer ${token.trim()}',
+    'Content-Type': 'application/json',
+    'Accept': 'application/json',
+  };
 
   String _readError(http.Response response) {
     try {

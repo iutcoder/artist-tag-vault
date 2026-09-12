@@ -12,8 +12,9 @@ documentation. It is not affiliated with or endorsed by NovelAI.
 
 - macOS (Apple Silicon) first, Windows 10/11 x64 target
 - automatic `artist:` prefix
-- reusable model, range-limited slider/spin-box controls, sampler, schedule,
-  prompt, and UC
+- Generate and Vault workspaces for creation and browsing
+- collapsible Advanced controls for model, canvas, sampler, prompt, and UC
+- model-aware automatic Quality Tags and Undesired Content presets
 - separate aspect-ratio and resolution presets with resolved pixel dimensions
 - editable 32-bit seed with a lock for controlled artist comparisons
 - per-sample artist-tag weight from `-5.00` to `+5.00`
@@ -22,6 +23,10 @@ documentation. It is not affiliated with or endorsed by NovelAI.
 - token storage in macOS Keychain / Windows Credential Manager
 - automatic PNG and JSON sidecar storage
 - folding latest-image preview and an Open Folder action
+- version/artist catalog, thumbnail strip, pan/zoom/fit/1:1 viewer, and
+  Generation Info panel
+- embedded PNG text metadata parsing with JSON sidecars used for app-specific
+  provenance and fallback data
 
 Samples use this future-gallery-friendly layout:
 

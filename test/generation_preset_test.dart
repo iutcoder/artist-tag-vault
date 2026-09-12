@@ -19,10 +19,7 @@ void main() {
   });
 
   test('old width and height preferences migrate to new selectors', () {
-    final preset = GenerationPreset.fromJson({
-      'width': 1216,
-      'height': 832,
-    });
+    final preset = GenerationPreset.fromJson({'width': 1216, 'height': 832});
     expect(preset.aspectRatio, ImageAspectRatioPreset.landscape);
     expect(preset.resolution, ImageResolutionPreset.normal);
   });
@@ -44,5 +41,44 @@ void main() {
     expect(NovelAiModel.v4Full.supportsNegativeNumericalEmphasis, isFalse);
     expect(NovelAiModel.v45Full.supportsNegativeNumericalEmphasis, isTrue);
     expect(NovelAiModel.v5Full.supportsNegativeNumericalEmphasis, isTrue);
+  });
+
+  test('V5 quality selections append the documented suffix', () {
+    final light = GenerationPreset.defaults().copyWith(
+      model: NovelAiModel.v5Full,
+      qualityTagPreset: QualityTagPreset.light,
+    );
+    final standard = light.copyWith(
+      qualityTagPreset: QualityTagPreset.standard,
+    );
+    expect(
+      light.composePrompt('1girl'),
+      '1girl, very aesthetic, amazing quality, no text',
+    );
+    expect(
+      standard.composePrompt('1girl'),
+      '1girl, very aesthetic, masterpiece, no text',
+    );
+  });
+
+  test('automatic UC and custom UC are combined once', () {
+    final preset = GenerationPreset.defaults().copyWith(
+      model: NovelAiModel.v5Full,
+      undesiredContentPreset: UndesiredContentPreset.humanFocus,
+      undesiredContent: 'extra fingers',
+    );
+    expect(preset.composedUndesiredContent, contains('mismatched pupils'));
+    expect(preset.composedUndesiredContent, endsWith(', extra fingers'));
+  });
+
+  test('legacy preferences preserve their previous effective text', () {
+    final preset = GenerationPreset.fromJson({
+      'prompt': 'portrait',
+      'undesiredContent': 'lowres',
+    });
+    expect(preset.qualityTagPreset, QualityTagPreset.off);
+    expect(preset.undesiredContentPreset, UndesiredContentPreset.none);
+    expect(preset.composePrompt('artist:test'), 'artist:test');
+    expect(preset.composedUndesiredContent, 'lowres');
   });
 }
