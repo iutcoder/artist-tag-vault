@@ -1,0 +1,75 @@
+name: macOS Beta Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+    branches:
+      - 'release/v*'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: macos-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Build and publish macOS beta
+    runs-on: macos-latest
+    timeout-minutes: 30
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Resolve release tag
+        id: release
+        shell: bash
+        run: |
+          if [[ "$GITHUB_REF_TYPE" == "tag" ]]; then
+            tag="$GITHUB_REF_NAME"
+          else
+            tag="${GITHUB_REF_NAME#release/}"
+          fi
+          if [[ "$tag" != v* ]]; then
+            echo "Release tag must start with v: $tag" >&2
+            exit 1
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2.23.0
+        with:
+          channel: stable
+          cache: true
+
+      - name: Generate macOS runner
+        run: |
+          flutter config --no-enable-swift-package-manager
+          flutter create --no-pub --platforms=macos --org com.iutcoder .
+          git restore -- .
+
+      - name: Resolve dependencies
+        run: flutter pub get
+
+      - name: Build macOS app
+        run: flutter build macos --release
+
+      - name: Package unsigned macOS app
+        run: >-
+          ditto -c -k --sequesterRsrc --keepParent
+          build/macos/Build/Products/Release/artist_tag_vault.app
+          Artist-Tag-Vault-macOS-unsigned.zip
+
+      - name: Publish prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ steps.release.outputs.tag }}
+        run: |
+          gh release create "$RELEASE_TAG" \
+            Artist-Tag-Vault-macOS-unsigned.zip \
+            --target "$GITHUB_SHA" \
+            --title "Artist Tag Vault $RELEASE_TAG" \
+            --prerelease \
+            --notes "Initial macOS beta. This build is unsigned and not notarized, so macOS Gatekeeper may require manual approval before first launch."
