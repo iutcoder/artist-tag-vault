@@ -27,6 +27,7 @@ class _HomePageState extends State<HomePage> {
   File? _previewFile;
   String _status = 'Enter an artist name to create a standardized sample.';
   bool _busy = false;
+  bool _previewExpanded = true;
 
   @override
   void initState() {
@@ -72,6 +73,12 @@ class _HomePageState extends State<HomePage> {
   }
 
   Future<void> _generate() async {
+    // Generating always reveals the preview, even when the user previously
+    // collapsed it to make more room for the controls.
+    if (!_previewExpanded) {
+      setState(() => _previewExpanded = true);
+    }
+
     final artist = _artistController.text.trim();
     if (artist.isEmpty) {
       _showError('아티스트 이름을 입력해 주세요.');
@@ -150,21 +157,8 @@ class _HomePageState extends State<HomePage> {
                       builder: (context, constraints) {
                         final compact = constraints.maxWidth < 860;
                         return compact
-                            ? Column(
-                                children: [
-                                  SizedBox(height: 390, child: _buildControls()),
-                                  const SizedBox(height: 18),
-                                  Expanded(child: _buildPreview()),
-                                ],
-                              )
-                            : Row(
-                                crossAxisAlignment: CrossAxisAlignment.stretch,
-                                children: [
-                                  SizedBox(width: 370, child: _buildControls()),
-                                  const SizedBox(width: 22),
-                                  Expanded(child: _buildPreview()),
-                                ],
-                              );
+                            ? _buildCompactLayout()
+                            : _buildWideLayout();
                       },
                     ),
                   ),
@@ -174,6 +168,42 @@ class _HomePageState extends State<HomePage> {
           ),
         ],
       ),
+    );
+  }
+
+  /// Uses vertical folding for narrow windows such as the macOS screenshot.
+  Widget _buildCompactLayout() {
+    if (!_previewExpanded) {
+      return Column(
+        children: [
+          Expanded(child: _buildControls()),
+          const SizedBox(height: 14),
+          SizedBox(height: 64, child: _buildPreview(compact: true)),
+        ],
+      );
+    }
+
+    return Column(
+      children: [
+        Flexible(flex: 5, child: _buildControls()),
+        const SizedBox(height: 14),
+        Flexible(flex: 4, child: _buildPreview(compact: true)),
+      ],
+    );
+  }
+
+  /// On wide windows the closed preview becomes a slim rail on the right.
+  Widget _buildWideLayout() {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        SizedBox(width: 370, child: _buildControls()),
+        const SizedBox(width: 22),
+        if (_previewExpanded)
+          Expanded(child: _buildPreview(compact: false))
+        else
+          SizedBox(width: 64, child: _buildPreview(compact: false)),
+      ],
     );
   }
 
@@ -223,9 +253,12 @@ class _HomePageState extends State<HomePage> {
 
   Widget _buildControls() {
     return GlassPanel(
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
+      // A short desktop window must scroll instead of producing a RenderFlex
+      // overflow stripe at the bottom of the preset summary.
+      child: SingleChildScrollView(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
           Text(
             'CREATE SAMPLE',
             style: TextStyle(
@@ -268,31 +301,108 @@ class _HomePageState extends State<HomePage> {
           _PresetLine('Guidance', _settings.preset.guidance.toString()),
           _PresetLine('Sampler', _settings.preset.sampler.label),
           _PresetLine('Schedule', _settings.preset.noiseSchedule.label),
-          const Spacer(),
+          const SizedBox(height: 20),
           Text(
             _status,
             maxLines: 3,
             overflow: TextOverflow.ellipsis,
             style: const TextStyle(color: Colors.white60, fontSize: 12),
           ),
-        ],
+          ],
+        ),
       ),
     );
   }
 
-  Widget _buildPreview() {
+  Widget _buildPreview({required bool compact}) {
     return GlassPanel(
-      padding: const EdgeInsets.all(16),
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(16),
-        child: _previewFile == null
-            ? const _EmptyPreview()
-            : Image.file(
-                _previewFile!,
-                fit: BoxFit.contain,
-                gaplessPlayback: true,
-              ),
+      padding: const EdgeInsets.all(10),
+      child: _previewExpanded
+          ? Column(
+              children: [
+                _PreviewHeader(
+                  compact: compact,
+                  expanded: true,
+                  onPressed: _togglePreview,
+                ),
+                const SizedBox(height: 8),
+                Expanded(
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(16),
+                    child: _previewFile == null
+                        ? const _EmptyPreview()
+                        : Image.file(
+                            _previewFile!,
+                            fit: BoxFit.contain,
+                            gaplessPlayback: true,
+                          ),
+                  ),
+                ),
+              ],
+            )
+          : _PreviewHeader(
+              compact: compact,
+              expanded: false,
+              onPressed: _togglePreview,
+            ),
+    );
+  }
+
+  void _togglePreview() {
+    setState(() => _previewExpanded = !_previewExpanded);
+  }
+}
+
+class _PreviewHeader extends StatelessWidget {
+  const _PreviewHeader({
+    required this.compact,
+    required this.expanded,
+    required this.onPressed,
+  });
+
+  final bool compact;
+  final bool expanded;
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    final button = IconButton(
+      tooltip: expanded ? 'Collapse preview' : 'Expand preview',
+      onPressed: onPressed,
+      visualDensity: VisualDensity.compact,
+      constraints: const BoxConstraints.tightFor(width: 40, height: 40),
+      icon: Icon(
+        compact
+            ? (expanded
+                ? Icons.keyboard_arrow_up_rounded
+                : Icons.keyboard_arrow_down_rounded)
+            : (expanded
+                ? Icons.chevron_right_rounded
+                : Icons.chevron_left_rounded),
       ),
+    );
+
+    if (!compact && !expanded) {
+      return Center(child: button);
+    }
+
+    return Row(
+      children: [
+        const SizedBox(width: 6),
+        const Icon(Icons.image_outlined, size: 18, color: Colors.white54),
+        const SizedBox(width: 8),
+        const Text(
+          'PREVIEW',
+          style: TextStyle(
+            color: Colors.white60,
+            fontSize: 11,
+            letterSpacing: 1.4,
+            fontWeight: FontWeight.w700,
+          ),
+        ),
+        const Spacer(),
+        button,
+      ],
     );
   }
 }
