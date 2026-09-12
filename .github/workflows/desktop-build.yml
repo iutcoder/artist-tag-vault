@@ -1,0 +1,104 @@
+name: Desktop Build
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - '.github/workflows/desktop-build.yml'
+      - 'analysis_options.yaml'
+      - 'lib/**'
+      - 'macos/**'
+      - 'windows/**'
+      - 'pubspec.yaml'
+      - 'test/**'
+
+concurrency:
+  group: desktop-build-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  macos:
+    name: macOS release build
+    runs-on: macos-latest
+    timeout-minutes: 30
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2.23.0
+        with:
+          channel: stable
+          cache: true
+
+      - name: Generate macOS runner
+        run: |
+          flutter config --no-enable-swift-package-manager
+          flutter create --no-pub --platforms=macos --org com.iutcoder .
+          git restore -- .
+
+      - name: Resolve dependencies
+        run: flutter pub get
+
+      - name: Build macOS app
+        run: flutter build macos --release
+
+      - name: Package unsigned macOS app
+        run: >-
+          ditto -c -k --sequesterRsrc --keepParent
+          build/macos/Build/Products/Release/artist_tag_vault.app
+          Artist-Tag-Vault-macOS-unsigned.zip
+
+      - name: Upload macOS artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Artist-Tag-Vault-macOS-unsigned
+          path: Artist-Tag-Vault-macOS-unsigned.zip
+          if-no-files-found: error
+          retention-days: 7
+
+  windows:
+    name: Windows x64 release build
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2.23.0
+        with:
+          channel: stable
+          cache: true
+
+      - name: Generate Windows runner
+        shell: pwsh
+        run: |
+          flutter create --no-pub --platforms=windows --org com.iutcoder .
+          git restore -- .
+
+      - name: Resolve dependencies
+        run: flutter pub get
+
+      - name: Build Windows app
+        run: flutter build windows --release
+
+      - name: Package Windows app
+        shell: pwsh
+        run: >-
+          Compress-Archive
+          -Path build\windows\x64\runner\Release\*
+          -DestinationPath Artist-Tag-Vault-Windows-x64.zip
+
+      - name: Upload Windows artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Artist-Tag-Vault-Windows-x64
+          path: Artist-Tag-Vault-Windows-x64.zip
+          if-no-files-found: error
+          retention-days: 7
