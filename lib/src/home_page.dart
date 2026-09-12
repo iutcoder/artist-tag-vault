@@ -33,6 +33,7 @@ class _HomePageState extends State<HomePage> {
   final _artistController = TextEditingController();
   final _promptController = TextEditingController();
   final _undesiredController = TextEditingController();
+  final _advancedScrollController = ScrollController();
   final _settingsStore = SettingsStore();
   final _api = NovelAiApi();
   final _sampleStorage = SampleStorage();
@@ -67,6 +68,7 @@ class _HomePageState extends State<HomePage> {
     _artistController.dispose();
     _promptController.dispose();
     _undesiredController.dispose();
+    _advancedScrollController.dispose();
     super.dispose();
   }
 
@@ -328,9 +330,9 @@ class _HomePageState extends State<HomePage> {
 
     return Column(
       children: [
-        Flexible(flex: 5, child: _buildControls()),
+        Flexible(flex: 7, child: _buildControls()),
         const SizedBox(height: 14),
-        Flexible(flex: 4, child: _buildPreview(compact: true)),
+        Flexible(flex: 3, child: _buildPreview(compact: true)),
       ],
     );
   }
@@ -413,10 +415,27 @@ class _HomePageState extends State<HomePage> {
   }
 
   Widget _buildControls() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        _buildGenerateSection(),
+        const SizedBox(height: 12),
+        if (_advancedExpanded)
+          Expanded(child: _buildAdvanced())
+        else
+          _buildAdvanced(),
+        const SizedBox(height: 12),
+        _buildAccountUsageSection(),
+      ],
+    );
+  }
+
+  Widget _buildGenerateSection() {
     return GlassPanel(
-      padding: const EdgeInsets.all(20),
+      padding: const EdgeInsets.all(18),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
+        mainAxisSize: MainAxisSize.min,
         children: [
           Text(
             'CREATE SAMPLE',
@@ -427,7 +446,7 @@ class _HomePageState extends State<HomePage> {
               fontWeight: FontWeight.w700,
             ),
           ),
-          const SizedBox(height: 20),
+          const SizedBox(height: 14),
           TextField(
             controller: _artistController,
             enabled: !_busy,
@@ -501,31 +520,34 @@ class _HomePageState extends State<HomePage> {
                 : const Icon(Icons.auto_awesome_rounded),
             label: Text(_busy ? 'Generating…' : 'Generate & Save'),
           ),
-          const SizedBox(height: 12),
-          Expanded(
-            child: SingleChildScrollView(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  _buildAdvanced(),
-                  const SizedBox(height: 12),
-                  _UsageCard(
-                    usage: _accountUsage,
-                    loading: _usageLoading,
-                    error: _usageError,
-                    showV5Allowance: _settings.preset.model.isV5,
-                    mayConsumeAnlas: _settings.preset.exceedsNormalFreeBoundary,
-                    onRefresh: _usageLoading ? null : _refreshUsage,
-                  ),
-                  const SizedBox(height: 14),
-                  Text(
-                    _status,
-                    maxLines: 3,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(color: Colors.white60, fontSize: 12),
-                  ),
-                ],
-              ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildAccountUsageSection() {
+    return GlassPanel(
+      padding: const EdgeInsets.all(12),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          _UsageCard(
+            usage: _accountUsage,
+            loading: _usageLoading,
+            error: _usageError,
+            showV5Allowance: _settings.preset.model.isV5,
+            mayConsumeAnlas: _settings.preset.exceedsNormalFreeBoundary,
+            onRefresh: _usageLoading ? null : _refreshUsage,
+          ),
+          const SizedBox(height: 8),
+          Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 4),
+            child: Text(
+              _status,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(color: Colors.white60, fontSize: 11),
             ),
           ),
         ],
@@ -535,283 +557,335 @@ class _HomePageState extends State<HomePage> {
 
   Widget _buildAdvanced() {
     final preset = _settings.preset;
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        color: Colors.white.withValues(alpha: 0.035),
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: Colors.white.withValues(alpha: 0.09)),
-      ),
-      child: ExpansionTile(
-        key: ValueKey(_advancedExpanded),
-        initiallyExpanded: _advancedExpanded,
-        onExpansionChanged: (value) =>
-            setState(() => _advancedExpanded = value),
-        tilePadding: const EdgeInsets.symmetric(horizontal: 14),
-        childrenPadding: const EdgeInsets.fromLTRB(14, 0, 14, 14),
-        title: const Text(
-          'ADVANCED',
-          style: TextStyle(
-            fontSize: 11,
-            letterSpacing: 1.2,
-            fontWeight: FontWeight.w700,
-            color: Colors.white60,
-          ),
-        ),
-        subtitle: Text(
-          '${preset.model.label.replaceFirst('NovelAI Diffusion ', '')} · '
-          '${preset.steps} steps · ${preset.dimensions.label}',
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-          style: const TextStyle(color: Colors.white38, fontSize: 10),
-        ),
+    return GlassPanel(
+      padding: EdgeInsets.zero,
+      borderRadius: 20,
+      child: Column(
+        mainAxisSize: _advancedExpanded ? MainAxisSize.max : MainAxisSize.min,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          DropdownButtonFormField<NovelAiModel>(
-            value: preset.model,
-            isExpanded: true,
-            decoration: const InputDecoration(labelText: 'Version'),
-            items: NovelAiModel.values
-                .map(
-                  (model) =>
-                      DropdownMenuItem(value: model, child: Text(model.label)),
-                )
-                .toList(),
-            onChanged: _busy ? null : (value) => _changeModel(value),
-          ),
-          const SizedBox(height: 10),
-          Row(
-            children: [
-              Expanded(
-                child: DropdownButtonFormField<QualityTagPreset>(
-                  value: preset.qualityTagPreset,
-                  decoration: const InputDecoration(
-                    labelText: 'Automatic quality',
+          InkWell(
+            borderRadius: BorderRadius.circular(20),
+            onTap: () => setState(() => _advancedExpanded = !_advancedExpanded),
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(16, 12, 10, 12),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text(
+                          'ADVANCED',
+                          style: TextStyle(
+                            fontSize: 11,
+                            letterSpacing: 1.2,
+                            fontWeight: FontWeight.w700,
+                            color: Colors.white60,
+                          ),
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          '${preset.model.label.replaceFirst('NovelAI Diffusion ', '')} · '
+                          '${preset.steps} steps · ${preset.dimensions.label}',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            color: Colors.white38,
+                            fontSize: 10,
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
-                  items: preset.availableQualityTagPresets
-                      .map(
-                        (value) => DropdownMenuItem(
-                          value: value,
-                          child: Text(value.label),
-                        ),
-                      )
-                      .toList(),
-                  onChanged: _busy
-                      ? null
-                      : (value) {
-                          if (value != null) {
-                            _updatePreset(
-                              preset.copyWith(qualityTagPreset: value),
-                            );
-                          }
-                        },
-                ),
-              ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: DropdownButtonFormField<UndesiredContentPreset>(
-                  value: preset.undesiredContentPreset,
-                  isExpanded: true,
-                  decoration: const InputDecoration(
-                    labelText: 'Negative preset',
+                  Icon(
+                    _advancedExpanded
+                        ? Icons.expand_less_rounded
+                        : Icons.expand_more_rounded,
+                    color: Colors.white60,
                   ),
-                  items: preset.availableUndesiredContentPresets
-                      .map(
-                        (value) => DropdownMenuItem(
-                          value: value,
-                          child: Text(value.label),
-                        ),
-                      )
-                      .toList(),
-                  onChanged: _busy
-                      ? null
-                      : (value) {
-                          if (value != null) {
-                            _updatePreset(
-                              preset.copyWith(undesiredContentPreset: value),
-                            );
-                          }
-                        },
-                ),
+                ],
               ),
-            ],
-          ),
-          const SizedBox(height: 10),
-          Row(
-            children: [
-              Expanded(
-                child: DropdownButtonFormField<ImageAspectRatioPreset>(
-                  value: preset.aspectRatio,
-                  decoration: const InputDecoration(labelText: 'Image ratio'),
-                  items: ImageAspectRatioPreset.values
-                      .map(
-                        (value) => DropdownMenuItem(
-                          value: value,
-                          child: Text('${value.label} · ${value.ratioLabel}'),
-                        ),
-                      )
-                      .toList(),
-                  onChanged: _busy
-                      ? null
-                      : (value) {
-                          if (value != null) {
-                            _updatePreset(preset.copyWith(aspectRatio: value));
-                          }
-                        },
-                ),
-              ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: DropdownButtonFormField<ImageResolutionPreset>(
-                  value: preset.resolution,
-                  decoration: const InputDecoration(labelText: 'Resolution'),
-                  items: ImageResolutionPreset.values
-                      .map(
-                        (value) => DropdownMenuItem(
-                          value: value,
-                          child: Text(value.label),
-                        ),
-                      )
-                      .toList(),
-                  onChanged: _busy
-                      ? null
-                      : (value) {
-                          if (value != null) {
-                            _updatePreset(preset.copyWith(resolution: value));
-                          }
-                        },
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 5),
-          Align(
-            alignment: Alignment.centerRight,
-            child: Text(
-              'Canvas · ${preset.dimensions.label}',
-              style: const TextStyle(color: Colors.white38, fontSize: 11),
             ),
           ),
-          _SliderSettingRow(
-            label: 'Steps',
-            value: preset.steps.toDouble(),
-            minimum: GenerationPreset.minimumSteps.toDouble(),
-            maximum: GenerationPreset.maximumSteps.toDouble(),
-            divisions: 49,
-            step: 1,
-            decimalPlaces: 0,
-            enabled: !_busy,
-            onChanged: (value) =>
-                _updatePreset(preset.copyWith(steps: value.round())),
-          ),
-          _SliderSettingRow(
-            label: 'Guidance',
-            value: preset.guidance,
-            minimum: GenerationPreset.minimumGuidance,
-            maximum: GenerationPreset.maximumGuidance,
-            divisions: 100,
-            step: .1,
-            decimalPlaces: 2,
-            enabled: !_busy,
-            onChanged: (value) =>
-                _updatePreset(preset.copyWith(guidance: value)),
-          ),
-          _SliderSettingRow(
-            label: 'Rescale',
-            value: preset.guidanceRescale,
-            minimum: GenerationPreset.minimumGuidanceRescale,
-            maximum: GenerationPreset.maximumGuidanceRescale,
-            divisions: 100,
-            step: .01,
-            decimalPlaces: 2,
-            enabled: !_busy,
-            onChanged: (value) =>
-                _updatePreset(preset.copyWith(guidanceRescale: value)),
-          ),
-          Row(
-            children: [
-              Expanded(
-                child: DropdownButtonFormField<NovelAiSampler>(
-                  value: preset.sampler,
-                  decoration: const InputDecoration(labelText: 'Sampler'),
-                  items: NovelAiSampler.values
-                      .map(
-                        (value) => DropdownMenuItem(
-                          value: value,
-                          child: Text(value.label),
+          if (_advancedExpanded)
+            Expanded(
+              child: Scrollbar(
+                controller: _advancedScrollController,
+                thumbVisibility: true,
+                child: SingleChildScrollView(
+                  controller: _advancedScrollController,
+                  padding: const EdgeInsets.fromLTRB(16, 4, 28, 16),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      DropdownButtonFormField<NovelAiModel>(
+                        value: preset.model,
+                        isExpanded: true,
+                        decoration: const InputDecoration(labelText: 'Version'),
+                        items: NovelAiModel.values
+                            .map(
+                              (model) => DropdownMenuItem(
+                                value: model,
+                                child: Text(model.label),
+                              ),
+                            )
+                            .toList(),
+                        onChanged: _busy
+                            ? null
+                            : (value) => _changeModel(value),
+                      ),
+                      const SizedBox(height: 10),
+                      _ResponsiveSettingPair(
+                        first: DropdownButtonFormField<ImageAspectRatioPreset>(
+                          value: preset.aspectRatio,
+                          isExpanded: true,
+                          decoration: const InputDecoration(
+                            labelText: 'Image ratio',
+                          ),
+                          items: ImageAspectRatioPreset.values
+                              .map(
+                                (value) => DropdownMenuItem(
+                                  value: value,
+                                  child: Text(
+                                    '${value.label} · ${value.ratioLabel}',
+                                  ),
+                                ),
+                              )
+                              .toList(),
+                          onChanged: _busy
+                              ? null
+                              : (value) {
+                                  if (value != null) {
+                                    _updatePreset(
+                                      preset.copyWith(aspectRatio: value),
+                                    );
+                                  }
+                                },
                         ),
-                      )
-                      .toList(),
-                  onChanged: _busy
-                      ? null
-                      : (value) {
-                          if (value != null) {
-                            _updatePreset(preset.copyWith(sampler: value));
-                          }
-                        },
+                        second: DropdownButtonFormField<ImageResolutionPreset>(
+                          value: preset.resolution,
+                          isExpanded: true,
+                          decoration: const InputDecoration(
+                            labelText: 'Resolution',
+                          ),
+                          items: ImageResolutionPreset.values
+                              .map(
+                                (value) => DropdownMenuItem(
+                                  value: value,
+                                  child: Text(value.label),
+                                ),
+                              )
+                              .toList(),
+                          onChanged: _busy
+                              ? null
+                              : (value) {
+                                  if (value != null) {
+                                    _updatePreset(
+                                      preset.copyWith(resolution: value),
+                                    );
+                                  }
+                                },
+                        ),
+                      ),
+                      const SizedBox(height: 5),
+                      Align(
+                        alignment: Alignment.centerRight,
+                        child: Text(
+                          'Canvas · ${preset.dimensions.label}',
+                          style: const TextStyle(
+                            color: Colors.white38,
+                            fontSize: 11,
+                          ),
+                        ),
+                      ),
+                      _SliderSettingRow(
+                        label: 'Steps',
+                        value: preset.steps.toDouble(),
+                        minimum: GenerationPreset.minimumSteps.toDouble(),
+                        maximum: GenerationPreset.maximumSteps.toDouble(),
+                        divisions: 49,
+                        step: 1,
+                        decimalPlaces: 0,
+                        enabled: !_busy,
+                        onChanged: (value) => _updatePreset(
+                          preset.copyWith(steps: value.round()),
+                        ),
+                      ),
+                      _SliderSettingRow(
+                        label: 'Guidance',
+                        value: preset.guidance,
+                        minimum: GenerationPreset.minimumGuidance,
+                        maximum: GenerationPreset.maximumGuidance,
+                        divisions: 100,
+                        step: .1,
+                        decimalPlaces: 2,
+                        enabled: !_busy,
+                        onChanged: (value) =>
+                            _updatePreset(preset.copyWith(guidance: value)),
+                      ),
+                      _SliderSettingRow(
+                        label: 'Rescale',
+                        value: preset.guidanceRescale,
+                        minimum: GenerationPreset.minimumGuidanceRescale,
+                        maximum: GenerationPreset.maximumGuidanceRescale,
+                        divisions: 100,
+                        step: .01,
+                        decimalPlaces: 2,
+                        enabled: !_busy,
+                        onChanged: (value) => _updatePreset(
+                          preset.copyWith(guidanceRescale: value),
+                        ),
+                      ),
+                      _ResponsiveSettingPair(
+                        first: DropdownButtonFormField<NovelAiSampler>(
+                          value: preset.sampler,
+                          isExpanded: true,
+                          decoration: const InputDecoration(
+                            labelText: 'Sampler',
+                          ),
+                          items: NovelAiSampler.values
+                              .map(
+                                (value) => DropdownMenuItem(
+                                  value: value,
+                                  child: Text(value.label),
+                                ),
+                              )
+                              .toList(),
+                          onChanged: _busy
+                              ? null
+                              : (value) {
+                                  if (value != null) {
+                                    _updatePreset(
+                                      preset.copyWith(sampler: value),
+                                    );
+                                  }
+                                },
+                        ),
+                        second: DropdownButtonFormField<NoiseSchedule>(
+                          value: preset.noiseSchedule,
+                          isExpanded: true,
+                          decoration: const InputDecoration(
+                            labelText: 'Schedule',
+                          ),
+                          items: NoiseSchedule.values
+                              .map(
+                                (value) => DropdownMenuItem(
+                                  value: value,
+                                  child: Text(value.label),
+                                ),
+                              )
+                              .toList(),
+                          onChanged: _busy
+                              ? null
+                              : (value) {
+                                  if (value != null) {
+                                    _updatePreset(
+                                      preset.copyWith(noiseSchedule: value),
+                                    );
+                                  }
+                                },
+                        ),
+                      ),
+                      const SizedBox(height: 10),
+                      TextField(
+                        controller: _promptController,
+                        enabled: !_busy,
+                        minLines: 3,
+                        maxLines: 5,
+                        decoration: const InputDecoration(
+                          labelText: 'Preset prompt',
+                        ),
+                        onChanged: (value) => _updatePreset(
+                          preset.copyWith(prompt: value.trim()),
+                        ),
+                      ),
+                      const SizedBox(height: 10),
+                      TextField(
+                        controller: _undesiredController,
+                        enabled: !_busy,
+                        minLines: 3,
+                        maxLines: 5,
+                        decoration: const InputDecoration(
+                          labelText: 'Additional undesired content',
+                        ),
+                        onChanged: (value) => _updatePreset(
+                          preset.copyWith(undesiredContent: value.trim()),
+                        ),
+                      ),
+                      const SizedBox(height: 10),
+                      _ResponsiveSettingPair(
+                        first: DropdownButtonFormField<QualityTagPreset>(
+                          value: preset.qualityTagPreset,
+                          isExpanded: true,
+                          decoration: const InputDecoration(
+                            labelText: 'Automatic quality',
+                          ),
+                          items: preset.availableQualityTagPresets
+                              .map(
+                                (value) => DropdownMenuItem(
+                                  value: value,
+                                  child: Text(value.label),
+                                ),
+                              )
+                              .toList(),
+                          onChanged: _busy
+                              ? null
+                              : (value) {
+                                  if (value != null) {
+                                    _updatePreset(
+                                      preset.copyWith(qualityTagPreset: value),
+                                    );
+                                  }
+                                },
+                        ),
+                        second: DropdownButtonFormField<UndesiredContentPreset>(
+                          value: preset.undesiredContentPreset,
+                          isExpanded: true,
+                          decoration: const InputDecoration(
+                            labelText: 'Negative preset',
+                          ),
+                          items: preset.availableUndesiredContentPresets
+                              .map(
+                                (value) => DropdownMenuItem(
+                                  value: value,
+                                  child: Text(value.label),
+                                ),
+                              )
+                              .toList(),
+                          onChanged: _busy
+                              ? null
+                              : (value) {
+                                  if (value != null) {
+                                    _updatePreset(
+                                      preset.copyWith(
+                                        undesiredContentPreset: value,
+                                      ),
+                                    );
+                                  }
+                                },
+                        ),
+                      ),
+                      const SizedBox(height: 10),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.end,
+                        children: [
+                          TextButton(
+                            onPressed: _busy ? null : _resetPreset,
+                            child: const Text('Reset'),
+                          ),
+                          const SizedBox(width: 8),
+                          FilledButton.tonal(
+                            onPressed: _busy ? null : _savePreset,
+                            child: const Text('Save as default'),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
                 ),
               ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: DropdownButtonFormField<NoiseSchedule>(
-                  value: preset.noiseSchedule,
-                  decoration: const InputDecoration(labelText: 'Schedule'),
-                  items: NoiseSchedule.values
-                      .map(
-                        (value) => DropdownMenuItem(
-                          value: value,
-                          child: Text(value.label),
-                        ),
-                      )
-                      .toList(),
-                  onChanged: _busy
-                      ? null
-                      : (value) {
-                          if (value != null) {
-                            _updatePreset(
-                              preset.copyWith(noiseSchedule: value),
-                            );
-                          }
-                        },
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 10),
-          TextField(
-            controller: _promptController,
-            enabled: !_busy,
-            minLines: 3,
-            maxLines: 5,
-            decoration: const InputDecoration(labelText: 'Preset prompt'),
-            onChanged: (value) =>
-                _updatePreset(preset.copyWith(prompt: value.trim())),
-          ),
-          const SizedBox(height: 10),
-          TextField(
-            controller: _undesiredController,
-            enabled: !_busy,
-            minLines: 3,
-            maxLines: 5,
-            decoration: const InputDecoration(
-              labelText: 'Additional undesired content',
             ),
-            onChanged: (value) =>
-                _updatePreset(preset.copyWith(undesiredContent: value.trim())),
-          ),
-          const SizedBox(height: 10),
-          Row(
-            mainAxisAlignment: MainAxisAlignment.end,
-            children: [
-              TextButton(
-                onPressed: _busy ? null : _resetPreset,
-                child: const Text('Reset'),
-              ),
-              const SizedBox(width: 8),
-              FilledButton.tonal(
-                onPressed: _busy ? null : _savePreset,
-                child: const Text('Save as default'),
-              ),
-            ],
-          ),
         ],
       ),
     );
@@ -891,91 +965,84 @@ class _UsageCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return DecoratedBox(
-      decoration: BoxDecoration(
-        color: Colors.white.withValues(alpha: 0.045),
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: Colors.white.withValues(alpha: 0.09)),
-      ),
-      child: Padding(
-        padding: const EdgeInsets.fromLTRB(14, 10, 8, 12),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Row(
-              children: [
-                const Icon(
-                  Icons.bolt_rounded,
-                  size: 18,
-                  color: Color(0xFF68D9D0),
-                ),
-                const SizedBox(width: 7),
-                const Text(
-                  'ACCOUNT USAGE',
-                  style: TextStyle(
-                    fontSize: 11,
-                    letterSpacing: 1.2,
-                    fontWeight: FontWeight.w700,
-                    color: Colors.white60,
-                  ),
-                ),
-                const Spacer(),
-                if (loading)
-                  const Padding(
-                    padding: EdgeInsets.all(10),
-                    child: SizedBox.square(
-                      dimension: 15,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    ),
-                  )
-                else
-                  IconButton(
-                    tooltip: 'Refresh usage',
-                    visualDensity: VisualDensity.compact,
-                    onPressed: onRefresh,
-                    icon: const Icon(Icons.refresh_rounded, size: 19),
-                  ),
-              ],
-            ),
-            if (usage != null) ...[
-              Text(
-                '${usage!.totalAnlas} Anlas · ${usage!.tierLabel}',
-                style: const TextStyle(fontWeight: FontWeight.w600),
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(4, 0, 0, 2),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            children: [
+              const Icon(
+                Icons.bolt_rounded,
+                size: 18,
+                color: Color(0xFF68D9D0),
               ),
-              const SizedBox(height: 3),
-              Text(
-                'Subscription ${usage!.subscriptionAnlas}  ·  '
-                'Paid ${usage!.paidAnlas}',
-                style: const TextStyle(color: Colors.white54, fontSize: 11),
-              ),
-              if (showV5Allowance) ...[
-                const SizedBox(height: 11),
-                _V5Allowance(usage: usage!),
-              ],
-            ] else
-              Text(
-                error ?? 'Usage has not been loaded.',
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
+              const SizedBox(width: 7),
+              const Text(
+                'ACCOUNT USAGE',
                 style: TextStyle(
-                  color: error == null ? Colors.white54 : Colors.redAccent,
                   fontSize: 11,
+                  letterSpacing: 1.2,
+                  fontWeight: FontWeight.w700,
+                  color: Colors.white60,
                 ),
               ),
-            const SizedBox(height: 9),
+              const Spacer(),
+              if (loading)
+                const Padding(
+                  padding: EdgeInsets.all(10),
+                  child: SizedBox.square(
+                    dimension: 15,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  ),
+                )
+              else
+                IconButton(
+                  tooltip: 'Refresh usage',
+                  visualDensity: VisualDensity.compact,
+                  onPressed: onRefresh,
+                  icon: const Icon(Icons.refresh_rounded, size: 19),
+                ),
+            ],
+          ),
+          if (usage != null) ...[
             Text(
-              mayConsumeAnlas
-                  ? 'Large canvas or more than 28 steps may consume Anlas.'
-                  : showV5Allowance
-                  ? 'V5 uses its allowance first when generation is eligible.'
-                  : 'Charge depends on your subscription conditions.',
+              '${usage!.totalAnlas} Anlas · ${usage!.tierLabel}',
+              style: const TextStyle(fontWeight: FontWeight.w600),
+            ),
+            const SizedBox(height: 3),
+            Text(
+              'Subscription ${usage!.subscriptionAnlas}  ·  '
+              'Paid ${usage!.paidAnlas}',
+              style: const TextStyle(color: Colors.white54, fontSize: 11),
+            ),
+            if (showV5Allowance) ...[
+              const SizedBox(height: 11),
+              _V5Allowance(usage: usage!),
+            ],
+          ] else
+            Text(
+              error ?? 'Usage has not been loaded.',
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
               style: TextStyle(
-                color: mayConsumeAnlas ? Colors.amberAccent : Colors.white38,
-                fontSize: 10,
+                color: error == null ? Colors.white54 : Colors.redAccent,
+                fontSize: 11,
               ),
             ),
-          ],
-        ),
+          const SizedBox(height: 9),
+          Text(
+            mayConsumeAnlas
+                ? 'Large canvas or more than 28 steps may consume Anlas.'
+                : showV5Allowance
+                ? 'V5 uses its allowance first when generation is eligible.'
+                : 'Charge depends on your subscription conditions.',
+            style: TextStyle(
+              color: mayConsumeAnlas ? Colors.amberAccent : Colors.white38,
+              fontSize: 10,
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -1121,6 +1188,35 @@ class _PreviewHeader extends StatelessWidget {
   }
 }
 
+class _ResponsiveSettingPair extends StatelessWidget {
+  const _ResponsiveSettingPair({required this.first, required this.second});
+
+  final Widget first;
+  final Widget second;
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        if (constraints.maxWidth < 420) {
+          return Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [first, const SizedBox(height: 10), second],
+          );
+        }
+        return Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Expanded(child: first),
+            const SizedBox(width: 10),
+            Expanded(child: second),
+          ],
+        );
+      },
+    );
+  }
+}
+
 class _SliderSettingRow extends StatelessWidget {
   const _SliderSettingRow({
     required this.label,
@@ -1148,24 +1244,17 @@ class _SliderSettingRow extends StatelessWidget {
   Widget build(BuildContext context) {
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 4),
-      child: Row(
-        children: [
-          SizedBox(
-            width: 72,
-            child: Text(label, style: const TextStyle(color: Colors.white70)),
-          ),
-          Expanded(
-            child: Slider(
-              value: value.clamp(minimum, maximum).toDouble(),
-              min: minimum,
-              max: maximum,
-              divisions: divisions,
-              label: value.toStringAsFixed(decimalPlaces),
-              onChanged: enabled ? onChanged : null,
-            ),
-          ),
-          const SizedBox(width: 6),
-          SizedBox(
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final slider = Slider(
+            value: value.clamp(minimum, maximum).toDouble(),
+            min: minimum,
+            max: maximum,
+            divisions: divisions,
+            label: value.toStringAsFixed(decimalPlaces),
+            onChanged: enabled ? onChanged : null,
+          );
+          final input = SizedBox(
             width: 94,
             child: NumericStepperField(
               value: value,
@@ -1176,8 +1265,38 @@ class _SliderSettingRow extends StatelessWidget {
               enabled: enabled,
               onChanged: onChanged,
             ),
-          ),
-        ],
+          );
+
+          if (constraints.maxWidth < 350) {
+            return Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Text(label, style: const TextStyle(color: Colors.white70)),
+                Row(
+                  children: [
+                    Expanded(child: slider),
+                    input,
+                  ],
+                ),
+              ],
+            );
+          }
+
+          return Row(
+            children: [
+              SizedBox(
+                width: 72,
+                child: Text(
+                  label,
+                  style: const TextStyle(color: Colors.white70),
+                ),
+              ),
+              Expanded(child: slider),
+              const SizedBox(width: 6),
+              input,
+            ],
+          );
+        },
       ),
     );
   }
