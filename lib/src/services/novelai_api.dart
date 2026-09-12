@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:math';
 import 'dart:typed_data';
 
+import 'package:artist_tag_vault/src/models/account_usage.dart';
 import 'package:artist_tag_vault/src/models/generation_preset.dart';
 import 'package:http/http.dart' as http;
 
@@ -46,6 +47,29 @@ class NovelAiApi {
       };
     } on Exception catch (error) {
       return TokenTestResult(false, '네트워크 오류: $error');
+    }
+  }
+
+  /// Reads both Image Anlas balances and the rechargeable V5 allowance.
+  Future<AccountUsage> fetchAccountUsage(String token) async {
+    if (token.trim().isEmpty) {
+      throw const NovelAiApiException('NovelAI API 토큰이 없습니다.');
+    }
+
+    final response = await _client.get(
+      _subscriptionUri,
+      headers: _headers(token),
+    ).timeout(const Duration(seconds: 20));
+
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      throw NovelAiApiException(_readError(response));
+    }
+
+    try {
+      final decoded = jsonDecode(utf8.decode(response.bodyBytes));
+      return AccountUsage.fromJson(decoded as Map<String, dynamic>);
+    } on Exception catch (error) {
+      throw NovelAiApiException('사용량 응답을 해석하지 못했습니다: $error');
     }
   }
 

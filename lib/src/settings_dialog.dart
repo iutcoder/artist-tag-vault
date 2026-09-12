@@ -28,6 +28,8 @@ class _SettingsDialogState extends State<SettingsDialog> {
   late NovelAiModel _model;
   late NovelAiSampler _sampler;
   late NoiseSchedule _noiseSchedule;
+  late ImageAspectRatioPreset _aspectRatio;
+  late ImageResolutionPreset _resolution;
   bool _testing = false;
   TokenTestResult? _testResult;
 
@@ -45,6 +47,8 @@ class _SettingsDialogState extends State<SettingsDialog> {
     _model = settings.preset.model;
     _sampler = settings.preset.sampler;
     _noiseSchedule = settings.preset.noiseSchedule;
+    _aspectRatio = settings.preset.aspectRatio;
+    _resolution = settings.preset.resolution;
   }
 
   @override
@@ -93,6 +97,8 @@ class _SettingsDialogState extends State<SettingsDialog> {
           guidanceRescale: rescale,
           sampler: _sampler,
           noiseSchedule: _noiseSchedule,
+          aspectRatio: _aspectRatio,
+          resolution: _resolution,
           prompt: _prompt.text.trim(),
           undesiredContent: _undesired.text.trim(),
         ),
@@ -179,6 +185,49 @@ class _SettingsDialogState extends State<SettingsDialog> {
               const SizedBox(height: 12),
               Row(
                 children: [
+                  Expanded(
+                    child: DropdownButtonFormField<ImageAspectRatioPreset>(
+                      initialValue: _aspectRatio,
+                      decoration: const InputDecoration(
+                        labelText: 'Image ratio',
+                      ),
+                      items: ImageAspectRatioPreset.values
+                          .map((ratio) => DropdownMenuItem(
+                                value: ratio,
+                                child: Text(
+                                  '${ratio.label} · ${ratio.ratioLabel}',
+                                ),
+                              ))
+                          .toList(),
+                      onChanged: (value) => setState(
+                        () => _aspectRatio = value ?? _aspectRatio,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: DropdownButtonFormField<ImageResolutionPreset>(
+                      initialValue: _resolution,
+                      decoration: InputDecoration(
+                        labelText: 'Resolution',
+                        helperText: _selectedDimensions.label,
+                      ),
+                      items: ImageResolutionPreset.values
+                          .map((resolution) => DropdownMenuItem(
+                                value: resolution,
+                                child: Text(resolution.label),
+                              ))
+                          .toList(),
+                      onChanged: (value) => setState(
+                        () => _resolution = value ?? _resolution,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 12),
+              Row(
+                children: [
                   Expanded(child: _numberField(_steps, 'Steps')),
                   const SizedBox(width: 12),
                   Expanded(child: _numberField(_guidance, 'Prompt guidance')),
@@ -257,4 +306,8 @@ class _SettingsDialogState extends State<SettingsDialog> {
       decoration: InputDecoration(labelText: label),
     );
   }
+
+  ImageDimensions get _selectedDimensions => GenerationPreset.defaults()
+      .copyWith(aspectRatio: _aspectRatio, resolution: _resolution)
+      .dimensions;
 }

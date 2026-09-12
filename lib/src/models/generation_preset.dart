@@ -12,6 +12,8 @@ enum NovelAiModel {
 
   final String label;
   final String apiId;
+
+  bool get isV5 => this == v5Full || this == v5Curated;
 }
 
 /// Human-readable sampler entry paired with its API identifier.
@@ -41,6 +43,39 @@ enum NoiseSchedule {
   final String apiId;
 }
 
+/// Canvas orientation shown separately from its resolution tier in settings.
+enum ImageAspectRatioPreset {
+  portrait('Portrait', '≈2:3'),
+  square('Square', '1:1'),
+  landscape('Landscape', '≈3:2');
+
+  const ImageAspectRatioPreset(this.label, this.ratioLabel);
+
+  final String label;
+  final String ratioLabel;
+}
+
+/// NovelAI-compatible size tiers. Large canvases can consume Anlas even when
+/// smaller single-image generations are covered by an Opus subscription.
+enum ImageResolutionPreset {
+  small('Small'),
+  normal('Normal'),
+  large('Large');
+
+  const ImageResolutionPreset(this.label);
+
+  final String label;
+}
+
+class ImageDimensions {
+  const ImageDimensions(this.width, this.height);
+
+  final int width;
+  final int height;
+
+  String get label => '$width × $height';
+}
+
 /// Reusable generation values applied consistently to every artist sample.
 class GenerationPreset {
   const GenerationPreset({
@@ -52,8 +87,8 @@ class GenerationPreset {
     required this.noiseSchedule,
     required this.prompt,
     required this.undesiredContent,
-    required this.width,
-    required this.height,
+    required this.aspectRatio,
+    required this.resolution,
   });
 
   factory GenerationPreset.defaults() => const GenerationPreset(
@@ -66,8 +101,8 @@ class GenerationPreset {
         prompt: '1girl, solo, portrait, simple background, looking at viewer',
         undesiredContent:
             'lowres, worst quality, bad quality, jpeg artifacts, watermark, text',
-        width: 832,
-        height: 1216,
+        aspectRatio: ImageAspectRatioPreset.portrait,
+        resolution: ImageResolutionPreset.normal,
       );
 
   final NovelAiModel model;
@@ -78,8 +113,39 @@ class GenerationPreset {
   final NoiseSchedule noiseSchedule;
   final String prompt;
   final String undesiredContent;
-  final int width;
-  final int height;
+  final ImageAspectRatioPreset aspectRatio;
+  final ImageResolutionPreset resolution;
+
+  ImageDimensions get dimensions {
+    return switch ((resolution, aspectRatio)) {
+      (ImageResolutionPreset.small, ImageAspectRatioPreset.portrait) =>
+        const ImageDimensions(512, 768),
+      (ImageResolutionPreset.small, ImageAspectRatioPreset.square) =>
+        const ImageDimensions(640, 640),
+      (ImageResolutionPreset.small, ImageAspectRatioPreset.landscape) =>
+        const ImageDimensions(768, 512),
+      (ImageResolutionPreset.normal, ImageAspectRatioPreset.portrait) =>
+        const ImageDimensions(832, 1216),
+      (ImageResolutionPreset.normal, ImageAspectRatioPreset.square) =>
+        const ImageDimensions(1024, 1024),
+      (ImageResolutionPreset.normal, ImageAspectRatioPreset.landscape) =>
+        const ImageDimensions(1216, 832),
+      (ImageResolutionPreset.large, ImageAspectRatioPreset.portrait) =>
+        const ImageDimensions(1024, 1536),
+      (ImageResolutionPreset.large, ImageAspectRatioPreset.square) =>
+        const ImageDimensions(1472, 1472),
+      (ImageResolutionPreset.large, ImageAspectRatioPreset.landscape) =>
+        const ImageDimensions(1536, 1024),
+    };
+  }
+
+  int get width => dimensions.width;
+  int get height => dimensions.height;
+
+  /// Mirrors the documented Opus boundary for a single image. Actual charging
+  /// still depends on the account tier, model, and current V5 usage allowance.
+  bool get exceedsNormalFreeBoundary =>
+      width * height > 1024 * 1024 || steps > 28;
 
   GenerationPreset copyWith({
     NovelAiModel? model,
@@ -90,8 +156,8 @@ class GenerationPreset {
     NoiseSchedule? noiseSchedule,
     String? prompt,
     String? undesiredContent,
-    int? width,
-    int? height,
+    ImageAspectRatioPreset? aspectRatio,
+    ImageResolutionPreset? resolution,
   }) =>
       GenerationPreset(
         model: model ?? this.model,
@@ -102,8 +168,8 @@ class GenerationPreset {
         noiseSchedule: noiseSchedule ?? this.noiseSchedule,
         prompt: prompt ?? this.prompt,
         undesiredContent: undesiredContent ?? this.undesiredContent,
-        width: width ?? this.width,
-        height: height ?? this.height,
+        aspectRatio: aspectRatio ?? this.aspectRatio,
+        resolution: resolution ?? this.resolution,
       );
 
   Map<String, Object> toJson() => {
@@ -115,6 +181,10 @@ class GenerationPreset {
         'noiseSchedule': noiseSchedule.name,
         'prompt': prompt,
         'undesiredContent': undesiredContent,
+        'aspectRatio': aspectRatio.name,
+        'resolution': resolution.name,
+        // Keeping the resolved dimensions makes each JSON sidecar readable
+        // without duplicating the preset lookup table in future tools.
         'width': width,
         'height': height,
       };
@@ -135,10 +205,40 @@ class GenerationPreset {
       prompt: json['prompt'] as String? ?? defaults.prompt,
       undesiredContent:
           json['undesiredContent'] as String? ?? defaults.undesiredContent,
-      width: (json['width'] as num?)?.toInt() ?? defaults.width,
-      height: (json['height'] as num?)?.toInt() ?? defaults.height,
+      aspectRatio: _enumByName(
+            ImageAspectRatioPreset.values,
+            json['aspectRatio'],
+          ) ??
+          _legacyAspectRatio(json) ??
+          defaults.aspectRatio,
+      resolution: _enumByName(
+            ImageResolutionPreset.values,
+            json['resolution'],
+          ) ??
+          _legacyResolution(json) ??
+          defaults.resolution,
     );
   }
+}
+
+ImageAspectRatioPreset? _legacyAspectRatio(Map<String, dynamic> json) {
+  final width = (json['width'] as num?)?.toInt();
+  final height = (json['height'] as num?)?.toInt();
+  if (width == null || height == null) return null;
+  if (width == height) return ImageAspectRatioPreset.square;
+  return width < height
+      ? ImageAspectRatioPreset.portrait
+      : ImageAspectRatioPreset.landscape;
+}
+
+ImageResolutionPreset? _legacyResolution(Map<String, dynamic> json) {
+  final width = (json['width'] as num?)?.toInt();
+  final height = (json['height'] as num?)?.toInt();
+  if (width == null || height == null) return null;
+  final pixels = width * height;
+  if (pixels <= 768 * 512) return ImageResolutionPreset.small;
+  if (pixels <= 1024 * 1024) return ImageResolutionPreset.normal;
+  return ImageResolutionPreset.large;
 }
 
 T? _enumByName<T extends Enum>(Iterable<T> values, Object? name) {

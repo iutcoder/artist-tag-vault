@@ -1,5 +1,7 @@
+import 'dart:async';
 import 'dart:io';
 
+import 'package:artist_tag_vault/src/models/account_usage.dart';
 import 'package:artist_tag_vault/src/models/app_settings.dart';
 import 'package:artist_tag_vault/src/services/novelai_api.dart';
 import 'package:artist_tag_vault/src/services/prompt_composer.dart';
@@ -28,6 +30,9 @@ class _HomePageState extends State<HomePage> {
   String _status = 'Enter an artist name to create a standardized sample.';
   bool _busy = false;
   bool _previewExpanded = true;
+  AccountUsage? _accountUsage;
+  bool _usageLoading = false;
+  String? _usageError;
 
   @override
   void initState() {
@@ -44,7 +49,9 @@ class _HomePageState extends State<HomePage> {
   Future<void> _loadSettings() async {
     try {
       final loaded = await _settingsStore.load();
-      if (mounted) setState(() => _settings = loaded);
+      if (!mounted) return;
+      setState(() => _settings = loaded);
+      if (loaded.apiToken.isNotEmpty) unawaited(_refreshUsage());
     } on SettingsStoreException catch (error) {
       if (mounted) _showError(error.message);
     }
@@ -67,6 +74,7 @@ class _HomePageState extends State<HomePage> {
         _settings = updated;
         _status = 'Preset saved.';
       });
+      unawaited(_refreshUsage());
     } on SettingsStoreException catch (error) {
       if (mounted) _showError(error.message);
     }
@@ -116,6 +124,7 @@ class _HomePageState extends State<HomePage> {
         _previewFile = file;
         _status = 'Saved · ${file.path}';
       });
+      unawaited(_refreshUsage());
     } on Exception catch (error) {
       if (mounted) _showError(error.toString());
     } finally {
@@ -128,6 +137,36 @@ class _HomePageState extends State<HomePage> {
       await _sampleStorage.openRootDirectory();
     } on Exception catch (error) {
       if (mounted) _showError(error.toString());
+    }
+  }
+
+  Future<void> _refreshUsage() async {
+    if (_settings.apiToken.isEmpty) {
+      if (mounted) {
+        setState(() {
+          _accountUsage = null;
+          _usageError = 'Save an API token to view usage.';
+        });
+      }
+      return;
+    }
+
+    setState(() {
+      _usageLoading = true;
+      _usageError = null;
+    });
+    try {
+      final usage = await _api.fetchAccountUsage(_settings.apiToken);
+      if (!mounted) return;
+      setState(() => _accountUsage = usage);
+    } on Exception catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _accountUsage = null;
+        _usageError = error.toString();
+      });
+    } finally {
+      if (mounted) setState(() => _usageLoading = false);
     }
   }
 
@@ -293,6 +332,15 @@ class _HomePageState extends State<HomePage> {
                 : const Icon(Icons.auto_awesome_rounded),
             label: Text(_busy ? 'Generating…' : 'Generate & Save'),
           ),
+          const SizedBox(height: 12),
+          _UsageCard(
+            usage: _accountUsage,
+            loading: _usageLoading,
+            error: _usageError,
+            showV5Allowance: _settings.preset.model.isV5,
+            mayConsumeAnlas: _settings.preset.exceedsNormalFreeBoundary,
+            onRefresh: _usageLoading ? null : _refreshUsage,
+          ),
           const SizedBox(height: 22),
           const Divider(),
           const SizedBox(height: 14),
@@ -301,6 +349,11 @@ class _HomePageState extends State<HomePage> {
           _PresetLine('Guidance', _settings.preset.guidance.toString()),
           _PresetLine('Sampler', _settings.preset.sampler.label),
           _PresetLine('Schedule', _settings.preset.noiseSchedule.label),
+          _PresetLine(
+            'Canvas',
+            '${_settings.preset.aspectRatio.ratioLabel} · '
+                '${_settings.preset.dimensions.label}',
+          ),
           const SizedBox(height: 20),
           Text(
             _status,
@@ -350,6 +403,181 @@ class _HomePageState extends State<HomePage> {
 
   void _togglePreview() {
     setState(() => _previewExpanded = !_previewExpanded);
+  }
+}
+
+class _UsageCard extends StatelessWidget {
+  const _UsageCard({
+    required this.usage,
+    required this.loading,
+    required this.error,
+    required this.showV5Allowance,
+    required this.mayConsumeAnlas,
+    required this.onRefresh,
+  });
+
+  final AccountUsage? usage;
+  final bool loading;
+  final String? error;
+  final bool showV5Allowance;
+  final bool mayConsumeAnlas;
+  final VoidCallback? onRefresh;
+
+  @override
+  Widget build(BuildContext context) {
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: Colors.white.withValues(alpha: 0.045),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: Colors.white.withValues(alpha: 0.09)),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(14, 10, 8, 12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Row(
+              children: [
+                const Icon(
+                  Icons.bolt_rounded,
+                  size: 18,
+                  color: Color(0xFF68D9D0),
+                ),
+                const SizedBox(width: 7),
+                const Text(
+                  'ACCOUNT USAGE',
+                  style: TextStyle(
+                    fontSize: 11,
+                    letterSpacing: 1.2,
+                    fontWeight: FontWeight.w700,
+                    color: Colors.white60,
+                  ),
+                ),
+                const Spacer(),
+                if (loading)
+                  const Padding(
+                    padding: EdgeInsets.all(10),
+                    child: SizedBox.square(
+                      dimension: 15,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    ),
+                  )
+                else
+                  IconButton(
+                    tooltip: 'Refresh usage',
+                    visualDensity: VisualDensity.compact,
+                    onPressed: onRefresh,
+                    icon: const Icon(Icons.refresh_rounded, size: 19),
+                  ),
+              ],
+            ),
+            if (usage != null) ...[
+              Text(
+                '${usage!.totalAnlas} Anlas · ${usage!.tierLabel}',
+                style: const TextStyle(fontWeight: FontWeight.w600),
+              ),
+              const SizedBox(height: 3),
+              Text(
+                'Subscription ${usage!.subscriptionAnlas}  ·  '
+                'Paid ${usage!.paidAnlas}',
+                style: const TextStyle(color: Colors.white54, fontSize: 11),
+              ),
+              if (showV5Allowance) ...[
+                const SizedBox(height: 11),
+                _V5Allowance(usage: usage!),
+              ],
+            ] else
+              Text(
+                error ?? 'Usage has not been loaded.',
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: TextStyle(
+                  color: error == null ? Colors.white54 : Colors.redAccent,
+                  fontSize: 11,
+                ),
+              ),
+            const SizedBox(height: 9),
+            Text(
+              mayConsumeAnlas
+                  ? 'Large canvas or more than 28 steps may consume Anlas.'
+                  : showV5Allowance
+                      ? 'V5 uses its allowance first when generation is eligible.'
+                      : 'Charge depends on your subscription conditions.',
+              style: TextStyle(
+                color: mayConsumeAnlas ? Colors.amberAccent : Colors.white38,
+                fontSize: 10,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _V5Allowance extends StatelessWidget {
+  const _V5Allowance({required this.usage});
+
+  final AccountUsage usage;
+
+  @override
+  Widget build(BuildContext context) {
+    final percent = usage.v5Percent;
+    if (percent == null) {
+      return const Text(
+        'V5 allowance is not available for this account.',
+        style: TextStyle(color: Colors.white54, fontSize: 11),
+      );
+    }
+
+    final normalized = (percent.clamp(0, 100) / 100).toDouble();
+    final unavailable = usage.v5Unavailable;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Row(
+          children: [
+            const Text('V5 allowance', style: TextStyle(fontSize: 11)),
+            const Spacer(),
+            Text(
+              '$percent%',
+              style: TextStyle(
+                color: unavailable ? Colors.redAccent : Colors.greenAccent,
+                fontSize: 11,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 6),
+        LinearProgressIndicator(
+          value: normalized,
+          minHeight: 6,
+          borderRadius: BorderRadius.circular(99),
+          color: unavailable ? Colors.redAccent : const Color(0xFF68D9D0),
+          backgroundColor: Colors.white10,
+        ),
+        const SizedBox(height: 5),
+        Text(
+          unavailable
+              ? 'Allowance depleted · Anlas will be used.'
+              : _nextRefillLabel(usage.secondsUntilNextPercent),
+          style: TextStyle(
+            color: unavailable ? Colors.redAccent : Colors.white38,
+            fontSize: 10,
+          ),
+        ),
+      ],
+    );
+  }
+
+  String _nextRefillLabel(int? seconds) {
+    if (seconds == null || seconds <= 0) return 'Allowance is fully charged.';
+    final duration = Duration(seconds: seconds);
+    if (duration.inHours > 0) {
+      return 'Next +1% in ${duration.inHours}h ${duration.inMinutes % 60}m';
+    }
+    return 'Next +1% in ${duration.inMinutes + 1}m';
   }
 }
 
