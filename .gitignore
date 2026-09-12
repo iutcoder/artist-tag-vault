@@ -1,0 +1,25 @@
+# Flutter and Dart
+.dart_tool/
+.flutter-plugins
+.flutter-plugins-dependencies
+.packages
+.pub-cache/
+build/
+coverage/
+
+# IDEs
+.idea/
+.vscode/
+*.iml
+
+# Platform build products
+macos/Flutter/ephemeral/
+macos/Pods/
+windows/flutter/ephemeral/
+**/xcuserdata/
+*.xcworkspace/xcuserdata/
+
+# Local secrets and generated samples
+.env
+*.token
+samples/
