@@ -45,6 +45,12 @@ jobs:
       - name: Resolve dependencies
         run: flutter pub get
 
+      - name: Analyze Dart code
+        run: flutter analyze
+
+      - name: Run tests
+        run: flutter test
+
       - name: Build macOS app
         run: flutter build macos --release
 

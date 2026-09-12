@@ -11,15 +11,31 @@ class PromptComposer {
     required String presetPrompt,
     double artistWeight = 1,
   }) {
+    final artistTag = formatArtistTag(artist, artistWeight);
+    final preset = presetPrompt.trim();
+    return preset.isEmpty ? artistTag : '$artistTag, $preset';
+  }
+
+  /// Composes an ordered list of artist tags before the shared preset.
+  static String composeMultiple({
+    required Iterable<({String artist, double weight})> artists,
+    required String presetPrompt,
+  }) {
+    final artistTags = artists
+        .map((entry) => formatArtistTag(entry.artist, entry.weight))
+        .join(', ');
+    final preset = presetPrompt.trim();
+    return preset.isEmpty ? artistTags : '$artistTags, $preset';
+  }
+
+  static String formatArtistTag(String artist, double weight) {
     final trimmed = artist.trim();
     final withoutPrefix = trimmed.toLowerCase().startsWith('artist:')
         ? trimmed.substring('artist:'.length).trim()
         : trimmed;
     final plainArtistTag = 'artist:$withoutPrefix';
-    final artistTag = (artistWeight - 1).abs() < 0.000001
+    return (weight - 1).abs() < 0.000001
         ? plainArtistTag
-        : '${artistWeight.toStringAsFixed(2)}:: $plainArtistTag ::';
-    final preset = presetPrompt.trim();
-    return preset.isEmpty ? artistTag : '$artistTag, $preset';
+        : '${weight.toStringAsFixed(2)}:: $plainArtistTag ::';
   }
 }

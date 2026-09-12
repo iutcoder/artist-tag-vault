@@ -51,4 +51,17 @@ void main() {
       '-0.25:: artist:sample_artist ::',
     );
   });
+
+  test('multiple artists preserve their input order and weights', () {
+    expect(
+      PromptComposer.composeMultiple(
+        artists: [
+          (artist: 'first', weight: 1.0),
+          (artist: 'artist:second2', weight: 1.25),
+        ],
+        presetPrompt: '1girl',
+      ),
+      'artist:first, 1.25:: artist:second2 ::, 1girl',
+    );
+  });
 }

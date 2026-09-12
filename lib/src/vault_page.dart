@@ -9,6 +9,8 @@ import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+enum _SubjectFilter { all, female, male, others }
+
 class VaultPage extends StatefulWidget {
   const VaultPage({
     required this.storage,
@@ -34,6 +36,7 @@ class _VaultPageState extends State<VaultPage> {
   bool _showInfo = false;
   String? _modelId;
   String? _artist;
+  _SubjectFilter _subjectFilter = _SubjectFilter.all;
   SavedSample? _selected;
   Size? _imageSize;
   Size? _viewerSize;
@@ -119,9 +122,19 @@ class _VaultPageState extends State<VaultPage> {
         .toList();
   }
 
-  List<SavedSample> get _artistSamples => _modelSamples
+  List<SavedSample> get _allArtistSamples => _modelSamples
       .where((sample) => _artist == null || sample.artist == _artist)
       .toList();
+
+  List<SavedSample> get _artistSamples =>
+      _allArtistSamples.where(_matchesSubjectFilter).toList();
+
+  bool _matchesSubjectFilter(SavedSample sample) => switch (_subjectFilter) {
+    _SubjectFilter.all => true,
+    _SubjectFilter.female => sample.subject == SampleSubject.female,
+    _SubjectFilter.male => sample.subject == SampleSubject.male,
+    _SubjectFilter.others => sample.subject == SampleSubject.others,
+  };
 
   void _selectModel(String? value) {
     setState(() {
@@ -143,6 +156,19 @@ class _VaultPageState extends State<VaultPage> {
       _selectedPaths.clear();
       _selectionAnchorPath = null;
       _artist = artist;
+      _selected = _artistSamples.isEmpty ? null : _artistSamples.first;
+    });
+    unawaited(_readSelectedImageSize());
+  }
+
+  void _selectSubject(_SubjectFilter? subject) {
+    if (subject == null) return;
+    setState(() {
+      _fitMode = true;
+      _selectionMode = false;
+      _selectedPaths.clear();
+      _selectionAnchorPath = null;
+      _subjectFilter = subject;
       _selected = _artistSamples.isEmpty ? null : _artistSamples.first;
     });
     unawaited(_readSelectedImageSize());
@@ -374,7 +400,8 @@ class _VaultPageState extends State<VaultPage> {
         .where(
           (sample) =>
               sample.modelId == reference.modelId &&
-              sample.artist == reference.artist,
+              sample.artist == reference.artist &&
+              _matchesSubjectFilter(sample),
         )
         .toList();
     if (nextSample == null) {
@@ -760,6 +787,22 @@ class _VaultPageState extends State<VaultPage> {
             ),
           ),
           const SizedBox(height: 10),
+          DropdownButtonFormField<_SubjectFilter>(
+            key: ValueKey(_subjectFilter),
+            initialValue: _subjectFilter,
+            decoration: const InputDecoration(labelText: 'Sample type'),
+            isExpanded: true,
+            items: _SubjectFilter.values
+                .map(
+                  (subject) => DropdownMenuItem(
+                    value: subject,
+                    child: Text(_subjectFilterLabel(subject)),
+                  ),
+                )
+                .toList(),
+            onChanged: _selectSubject,
+          ),
+          const SizedBox(height: 10),
           Expanded(
             child: _artists.isEmpty
                 ? const Center(
@@ -791,6 +834,28 @@ class _VaultPageState extends State<VaultPage> {
         ],
       ),
     );
+  }
+
+  String _subjectFilterLabel(_SubjectFilter subject) {
+    final count = switch (subject) {
+      _SubjectFilter.all => _allArtistSamples.length,
+      _SubjectFilter.female => _allArtistSamples
+          .where((sample) => sample.subject == SampleSubject.female)
+          .length,
+      _SubjectFilter.male => _allArtistSamples
+          .where((sample) => sample.subject == SampleSubject.male)
+          .length,
+      _SubjectFilter.others => _allArtistSamples
+          .where((sample) => sample.subject == SampleSubject.others)
+          .length,
+    };
+    final label = switch (subject) {
+      _SubjectFilter.all => 'All',
+      _SubjectFilter.female => 'Female · 1girl',
+      _SubjectFilter.male => 'Male · 1boy',
+      _SubjectFilter.others => 'Others',
+    };
+    return '$label  ($count)';
   }
 
   Widget _buildViewer({required bool wideInfo}) {

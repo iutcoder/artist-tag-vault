@@ -1,9 +1,11 @@
 import 'dart:async';
 import 'dart:io';
 import 'dart:math';
+import 'dart:typed_data';
 
 import 'package:artist_tag_vault/src/models/account_usage.dart';
 import 'package:artist_tag_vault/src/models/app_settings.dart';
+import 'package:artist_tag_vault/src/models/custom_artist.dart';
 import 'package:artist_tag_vault/src/models/generation_preset.dart';
 import 'package:artist_tag_vault/src/models/saved_sample.dart';
 import 'package:artist_tag_vault/src/services/danbooru_autocomplete.dart';
@@ -19,7 +21,7 @@ import 'package:artist_tag_vault/src/widgets/numeric_stepper_field.dart';
 import 'package:flutter/material.dart';
 import 'package:path/path.dart' as path;
 
-enum _Workspace { generate, vault }
+enum _Workspace { generate, custom, vault }
 
 /// Main artist entry, generation action, and latest-sample preview.
 class HomePage extends StatefulWidget {
@@ -46,6 +48,7 @@ class _HomePageState extends State<HomePage> {
 
   AppSettings _settings = AppSettings.defaults();
   File? _previewFile;
+  Uint8List? _previewBytes;
   String _status = 'Enter an artist name to create a standardized sample.';
   bool _busy = false;
   bool _previewExpanded = true;
@@ -58,6 +61,10 @@ class _HomePageState extends State<HomePage> {
   late int _seed;
   bool _seedLocked = false;
   double _artistWeight = 1;
+  int _generationCount = 1;
+  final List<CustomArtist> _customArtists = [];
+  bool _randomizeCustomOrder = false;
+  bool _randomizeCustomWeights = false;
 
   @override
   void initState() {
@@ -127,9 +134,14 @@ class _HomePageState extends State<HomePage> {
       setState(() => _previewExpanded = true);
     }
 
+    final custom = _workspace == _Workspace.custom;
     final artist = _artistController.text.trim();
-    if (artist.isEmpty) {
+    if (!custom && artist.isEmpty) {
       _showError('아티스트 이름을 입력해 주세요.');
+      return;
+    }
+    if (custom && _customArtists.isEmpty) {
+      _showError('Custom 목록에 아티스트를 한 명 이상 추가해 주세요.');
       return;
     }
     if (_settings.apiToken.isEmpty) {
@@ -138,56 +150,91 @@ class _HomePageState extends State<HomePage> {
     }
 
     final model = _settings.preset.model;
-    if ((_artistWeight - 1).abs() >= 0.000001 &&
+    final configuredWeights = custom
+        ? _customArtists.map((entry) => entry.weight)
+        : [_artistWeight];
+    final usesWeights = (_randomizeCustomWeights && custom) ||
+        configuredWeights.any((weight) => (weight - 1).abs() >= 0.000001);
+    if (usesWeights &&
         !model.supportsNumericalEmphasis) {
       _showError('이 모델은 숫자 가중치를 지원하지 않습니다. 가중치를 1.00으로 설정해 주세요.');
       return;
     }
-    if (_artistWeight < 0 && !model.supportsNegativeNumericalEmphasis) {
+    if (configuredWeights.any((weight) => weight < 0) &&
+        !model.supportsNegativeNumericalEmphasis) {
       _showError('음수 가중치는 NovelAI Diffusion V4.5 이상에서 사용할 수 있습니다.');
       return;
     }
 
-    // An unlocked seed advances immediately before each request. A locked
-    // seed remains unchanged so artists can be compared under the same noise.
-    final requestSeed = _seedLocked ? _seed : _createRandomSeed();
-
-    final artistPrompt = PromptComposer.compose(
-      artist: artist,
-      presetPrompt: _settings.preset.prompt,
-      artistWeight: _artistWeight,
-    );
-    final prompt = _settings.preset.composePrompt(artistPrompt);
     final negativePrompt = _settings.preset.composedUndesiredContent;
     setState(() {
       _busy = true;
-      _seed = requestSeed;
-      _status = 'Generating artist:$artist…';
+      _status = 'Preparing $_generationCount generation(s)…';
     });
 
     try {
-      final generated = await _api.generate(
-        token: _settings.apiToken,
-        prompt: prompt,
-        negativePrompt: negativePrompt,
-        preset: _settings.preset,
-        seed: requestSeed,
-      );
-      final file = await _sampleStorage.save(
-        bytes: generated.bytes,
-        artist: artist,
-        composedPrompt: prompt,
-        composedUndesiredContent: negativePrompt,
-        seed: generated.seed,
-        artistWeight: _artistWeight,
-        preset: _settings.preset,
-      );
-      if (!mounted) return;
-      setState(() {
-        _previewFile = file;
-        _seed = generated.seed;
-        _status = 'Saved · ${file.path}';
-      });
+      for (var index = 0; index < _generationCount; index++) {
+        final requestSeed = _seedLocked ? _seed : _createRandomSeed();
+        final preparedArtists = custom
+            ? CustomArtistRandomizer.prepare(
+                _customArtists,
+                randomizeOrder: _randomizeCustomOrder,
+                randomizeWeights: _randomizeCustomWeights,
+                random: _random,
+              )
+            : <CustomArtist>[];
+        final artistPrompt = custom
+            ? PromptComposer.composeMultiple(
+                artists: preparedArtists
+                    .map((entry) => (artist: entry.name, weight: entry.weight)),
+                presetPrompt: _settings.preset.prompt,
+              )
+            : PromptComposer.compose(
+                artist: artist,
+                presetPrompt: _settings.preset.prompt,
+                artistWeight: _artistWeight,
+              );
+        final prompt = _settings.preset.composePrompt(artistPrompt);
+        if (mounted) {
+          setState(() {
+            _seed = requestSeed;
+            _status = 'Generating ${index + 1} / $_generationCount…';
+          });
+        }
+        final generated = await _api.generate(
+          token: _settings.apiToken,
+          prompt: prompt,
+          negativePrompt: negativePrompt,
+          preset: _settings.preset,
+          seed: requestSeed,
+        );
+        if (custom) {
+          if (!mounted) return;
+          setState(() {
+            _previewFile = null;
+            _previewBytes = generated.bytes;
+            _seed = generated.seed;
+            _status = 'Generated ${index + 1} / $_generationCount · not saved';
+          });
+        } else {
+          final file = await _sampleStorage.save(
+            bytes: generated.bytes,
+            artist: artist,
+            composedPrompt: prompt,
+            composedUndesiredContent: negativePrompt,
+            seed: generated.seed,
+            artistWeight: _artistWeight,
+            preset: _settings.preset,
+          );
+          if (!mounted) return;
+          setState(() {
+            _previewBytes = null;
+            _previewFile = file;
+            _seed = generated.seed;
+            _status = 'Saved ${index + 1} / $_generationCount · ${file.path}';
+          });
+        }
+      }
       unawaited(_refreshUsage());
     } on Exception catch (error) {
       if (mounted) _showError(error.toString());
@@ -300,7 +347,7 @@ class _HomePageState extends State<HomePage> {
           SafeArea(
             child: LayoutBuilder(
               builder: (context, windowConstraints) {
-                final compactHeader = windowConstraints.maxWidth < 800;
+                final compactHeader = windowConstraints.maxWidth < 1050;
                 final edge = windowConstraints.maxWidth < 700 ? 16.0 : 28.0;
                 return Padding(
                   padding: EdgeInsets.all(edge),
@@ -430,6 +477,11 @@ class _HomePageState extends State<HomePage> {
           label: Text('Generate'),
         ),
         ButtonSegment(
+          value: _Workspace.custom,
+          icon: Icon(Icons.tune_rounded),
+          label: Text('Custom'),
+        ),
+        ButtonSegment(
           value: _Workspace.vault,
           icon: Icon(Icons.photo_library_outlined),
           label: Text('Vault'),
@@ -497,6 +549,7 @@ class _HomePageState extends State<HomePage> {
   }
 
   Widget _buildGenerateSection() {
+    final custom = _workspace == _Workspace.custom;
     return GlassPanel(
       padding: const EdgeInsets.all(18),
       child: Column(
@@ -504,7 +557,7 @@ class _HomePageState extends State<HomePage> {
         mainAxisSize: MainAxisSize.min,
         children: [
           Text(
-            'CREATE SAMPLE',
+            custom ? 'CUSTOM GENERATION' : 'CREATE SAMPLE',
             style: TextStyle(
               color: Theme.of(context).colorScheme.primary,
               fontSize: 12,
@@ -513,13 +566,16 @@ class _HomePageState extends State<HomePage> {
             ),
           ),
           const SizedBox(height: 14),
-          DanbooruArtistField(
-            controller: _artistController,
-            focusNode: _artistFocusNode,
-            service: _danbooruAutocomplete,
-            enabled: !_busy,
-            onSubmitted: (_) => _generate(),
-          ),
+          if (custom)
+            _buildCustomArtistList()
+          else
+            DanbooruArtistField(
+              controller: _artistController,
+              focusNode: _artistFocusNode,
+              service: _danbooruAutocomplete,
+              enabled: !_busy,
+              onSubmitted: (_) => _generate(),
+            ),
           const SizedBox(height: 12),
           Row(
             crossAxisAlignment: CrossAxisAlignment.end,
@@ -558,34 +614,230 @@ class _HomePageState extends State<HomePage> {
               ),
             ],
           ),
-          const SizedBox(height: 12),
-          NumericStepperField(
-            value: _artistWeight,
-            minimum: -5,
-            maximum: 5,
-            step: 0.01,
-            decimalPlaces: 2,
-            enabled: !_busy,
-            labelText: 'Artist weight  ·  −5.00 to +5.00',
-            onChanged: (value) => setState(() => _artistWeight = value),
-          ),
-          const SizedBox(height: 14),
-          FilledButton.icon(
-            onPressed: _busy ? null : _generate,
-            style: FilledButton.styleFrom(
-              padding: const EdgeInsets.symmetric(vertical: 17),
+          if (!custom) ...[
+            const SizedBox(height: 12),
+            NumericStepperField(
+              value: _artistWeight,
+              minimum: -5,
+              maximum: 5,
+              step: 0.01,
+              decimalPlaces: 2,
+              enabled: !_busy,
+              labelText: 'Artist weight  ·  −5.00 to +5.00',
+              onChanged: (value) => setState(() => _artistWeight = value),
             ),
-            icon: _busy
-                ? const SizedBox.square(
-                    dimension: 18,
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  )
-                : const Icon(Icons.auto_awesome_rounded),
-            label: Text(_busy ? 'Generating…' : 'Generate & Save'),
+          ] else ...[
+            const SizedBox(height: 10),
+            CheckboxListTile(
+              dense: true,
+              contentPadding: EdgeInsets.zero,
+              title: const Text('Random artist order'),
+              value: _randomizeCustomOrder,
+              onChanged: _busy
+                  ? null
+                  : (value) => setState(
+                      () => _randomizeCustomOrder = value ?? false,
+                    ),
+            ),
+            CheckboxListTile(
+              dense: true,
+              contentPadding: EdgeInsets.zero,
+              title: const Text('Random weights  ·  0.50–1.50'),
+              value: _randomizeCustomWeights,
+              onChanged: _busy
+                  ? null
+                  : (value) => setState(
+                      () => _randomizeCustomWeights = value ?? false,
+                    ),
+            ),
+          ],
+          const SizedBox(height: 14),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              Expanded(
+                child: FilledButton.icon(
+                  onPressed: _busy ? null : _generate,
+                  style: FilledButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(vertical: 17),
+                  ),
+                  icon: _busy
+                      ? const SizedBox.square(
+                          dimension: 18,
+                          child: CircularProgressIndicator(strokeWidth: 2),
+                        )
+                      : const Icon(Icons.auto_awesome_rounded),
+                  label: Text(
+                    _busy
+                        ? 'Generating…'
+                        : custom
+                        ? 'Generate'
+                        : 'Generate & Save',
+                  ),
+                ),
+              ),
+              const SizedBox(width: 10),
+              SizedBox(
+                width: 92,
+                child: NumericStepperField(
+                  value: _generationCount.toDouble(),
+                  minimum: 1,
+                  maximum: 99,
+                  step: 1,
+                  decimalPlaces: 0,
+                  enabled: !_busy,
+                  labelText: 'Count',
+                  onChanged: (value) =>
+                      setState(() => _generationCount = value.round()),
+                ),
+              ),
+            ],
           ),
         ],
       ),
     );
+  }
+
+  Widget _buildCustomArtistList() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        OutlinedButton.icon(
+          onPressed: _busy ? null : () => _editCustomArtist(),
+          icon: const Icon(Icons.person_add_alt_1_rounded),
+          label: const Text('Add artist'),
+        ),
+        if (_customArtists.isEmpty)
+          const Padding(
+            padding: EdgeInsets.only(top: 10),
+            child: Text(
+              'No artists added yet.',
+              textAlign: TextAlign.center,
+              style: TextStyle(color: Colors.white38, fontSize: 11),
+            ),
+          )
+        else
+          Column(
+            children: [
+              const Padding(
+                padding: EdgeInsets.fromLTRB(34, 8, 88, 0),
+                child: Row(
+                  children: [
+                    Expanded(
+                      child: Text('ARTIST', style: _customColumnStyle),
+                    ),
+                    SizedBox(
+                      width: 58,
+                      child: Text('WEIGHT', style: _customColumnStyle),
+                    ),
+                    SizedBox(
+                      width: 42,
+                      child: Text('FIX', style: _customColumnStyle),
+                    ),
+                  ],
+                ),
+              ),
+              ConstrainedBox(
+                constraints: const BoxConstraints(maxHeight: 160),
+                child: ReorderableListView.builder(
+                  shrinkWrap: true,
+                  buildDefaultDragHandles: false,
+                  itemCount: _customArtists.length,
+                  onReorder: _busy ? (_, __) {} : _reorderCustomArtist,
+                  itemBuilder: (context, index) {
+                    final artist = _customArtists[index];
+                    return ListTile(
+                  key: ObjectKey(artist),
+                  dense: true,
+                  contentPadding: const EdgeInsets.only(left: 4),
+                  leading: ReorderableDragStartListener(
+                    index: index,
+                    enabled: !_busy,
+                    child: const Icon(Icons.drag_handle_rounded, size: 18),
+                  ),
+                  title: Text(artist.name, overflow: TextOverflow.ellipsis),
+                  trailing: SizedBox(
+                    width: 158,
+                    child: Row(
+                      children: [
+                        SizedBox(
+                          width: 44,
+                          child: Text(artist.weight.toStringAsFixed(2)),
+                        ),
+                        Checkbox(
+                          value: artist.fixed,
+                          visualDensity: VisualDensity.compact,
+                          onChanged: _busy
+                              ? null
+                              : (value) => setState(
+                                  () => _customArtists[index] = artist.copyWith(
+                                    fixed: value ?? false,
+                                  ),
+                                ),
+                        ),
+                      IconButton(
+                        tooltip: 'Edit artist',
+                        visualDensity: VisualDensity.compact,
+                        constraints: const BoxConstraints.tightFor(
+                          width: 36,
+                          height: 36,
+                        ),
+                        onPressed: _busy
+                            ? null
+                            : () => _editCustomArtist(index: index),
+                        icon: const Icon(Icons.edit_outlined, size: 18),
+                      ),
+                      IconButton(
+                        tooltip: 'Remove artist',
+                        visualDensity: VisualDensity.compact,
+                        constraints: const BoxConstraints.tightFor(
+                          width: 36,
+                          height: 36,
+                        ),
+                        onPressed: _busy
+                            ? null
+                            : () => setState(
+                                () => _customArtists.removeAt(index),
+                              ),
+                        icon: const Icon(Icons.close_rounded, size: 18),
+                      ),
+                      ],
+                    ),
+                  ),
+                );
+                  },
+                ),
+              ),
+            ],
+          ),
+      ],
+    );
+  }
+
+  void _reorderCustomArtist(int oldIndex, int newIndex) {
+    setState(() {
+      if (newIndex > oldIndex) newIndex--;
+      final artist = _customArtists.removeAt(oldIndex);
+      _customArtists.insert(newIndex, artist);
+    });
+  }
+
+  Future<void> _editCustomArtist({int? index}) async {
+    final result = await showDialog<CustomArtist>(
+      context: context,
+      builder: (context) => _CustomArtistDialog(
+        initialValue: index == null ? null : _customArtists[index],
+        service: _danbooruAutocomplete,
+      ),
+    );
+    if (result == null || !mounted) return;
+    setState(() {
+      if (index == null) {
+        _customArtists.add(result);
+      } else {
+        _customArtists[index] = result;
+      }
+    });
   }
 
   Widget _buildAccountUsageSection() {
@@ -980,8 +1232,14 @@ class _HomePageState extends State<HomePage> {
                 Expanded(
                   child: ClipRRect(
                     borderRadius: BorderRadius.circular(16),
-                    child: _previewFile == null
+                    child: _previewFile == null && _previewBytes == null
                         ? const _EmptyPreview()
+                        : _previewBytes != null
+                        ? Image.memory(
+                            _previewBytes!,
+                            fit: BoxFit.contain,
+                            gaplessPlayback: true,
+                          )
                         : Image.file(
                             _previewFile!,
                             fit: BoxFit.contain,
@@ -1001,6 +1259,105 @@ class _HomePageState extends State<HomePage> {
 
   void _togglePreview() {
     setState(() => _previewExpanded = !_previewExpanded);
+  }
+}
+
+const _customColumnStyle = TextStyle(
+  color: Colors.white38,
+  fontSize: 9,
+  letterSpacing: .8,
+  fontWeight: FontWeight.w700,
+);
+
+class _CustomArtistDialog extends StatefulWidget {
+  const _CustomArtistDialog({
+    required this.initialValue,
+    required this.service,
+  });
+
+  final CustomArtist? initialValue;
+  final DanbooruAutocompleteService service;
+
+  @override
+  State<_CustomArtistDialog> createState() => _CustomArtistDialogState();
+}
+
+class _CustomArtistDialogState extends State<_CustomArtistDialog> {
+  late final TextEditingController _controller;
+  final _focusNode = FocusNode();
+  late double _weight;
+  late bool _fixed;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = TextEditingController(text: widget.initialValue?.name ?? '');
+    _weight = widget.initialValue?.weight ?? 1;
+    _fixed = widget.initialValue?.fixed ?? false;
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    _focusNode.dispose();
+    super.dispose();
+  }
+
+  void _submit() {
+    final name = _controller.text.trim();
+    if (name.isEmpty) return;
+    Navigator.of(context).pop(
+      CustomArtist(name: name, weight: _weight, fixed: _fixed),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: Text(widget.initialValue == null ? 'Add artist' : 'Edit artist'),
+      content: SizedBox(
+        width: 420,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            DanbooruArtistField(
+              controller: _controller,
+              focusNode: _focusNode,
+              service: widget.service,
+              onSubmitted: (_) => _submit(),
+            ),
+            const SizedBox(height: 14),
+            NumericStepperField(
+              value: _weight,
+              minimum: -5,
+              maximum: 5,
+              step: .01,
+              decimalPlaces: 2,
+              labelText: 'Weight',
+              onChanged: (value) => setState(() => _weight = value),
+            ),
+            CheckboxListTile(
+              contentPadding: EdgeInsets.zero,
+              title: const Text('Fixed position and weight'),
+              subtitle: const Text(
+                'Excluded from both random options.',
+                style: TextStyle(fontSize: 11),
+              ),
+              value: _fixed,
+              onChanged: (value) => setState(() => _fixed = value ?? false),
+            ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(),
+          child: const Text('Cancel'),
+        ),
+        FilledButton(onPressed: _submit, child: const Text('Save')),
+      ],
+    );
   }
 }
 
