@@ -34,11 +34,13 @@ class _VaultPageState extends State<VaultPage> {
   Size? _imageSize;
   Size? _viewerSize;
   String? _error;
-  Offset? _swipeStart;
-  int? _swipePointer;
   bool _imageAtFit = true;
-  Offset _trackpadSwipe = Offset.zero;
-  bool _trackingTrackpadSwipe = false;
+  Matrix4? _gestureStartTransform;
+  Offset? _gestureStartScenePoint;
+  Offset _gestureDistance = Offset.zero;
+  double _gestureStartScale = 1;
+  bool _gestureStartedAtFit = false;
+  bool _gestureScaled = false;
   int? _navigationCue;
   Timer? _navigationCueTimer;
 
@@ -152,6 +154,72 @@ class _VaultPageState extends State<VaultPage> {
     _moveSelection(distance.dx < 0 ? 1 : -1, showCue: true);
   }
 
+  void _startImageGesture(ScaleStartDetails details) {
+    _gestureStartTransform = Matrix4.copy(_transform.value);
+    _gestureStartScenePoint = _transform.toScene(details.localFocalPoint);
+    _gestureDistance = Offset.zero;
+    _gestureStartScale = _transform.value.getMaxScaleOnAxis();
+    _gestureStartedAtFit = _imageAtFit;
+    _gestureScaled = false;
+  }
+
+  void _updateImageGesture(ScaleUpdateDetails details) {
+    final start = _gestureStartTransform;
+    final scenePoint = _gestureStartScenePoint;
+    if (start == null || scenePoint == null) return;
+    _gestureDistance += details.focalPointDelta;
+
+    final scaling =
+        _gestureScaled ||
+        (details.scale - 1).abs() > .001 ||
+        details.pointerCount > 1;
+    if (scaling) {
+      _gestureScaled = true;
+      final minimumScale = _minimumScale;
+      final scale = (_gestureStartScale * details.scale)
+          .clamp(minimumScale, 8.0)
+          .toDouble();
+      final focalPoint = details.localFocalPoint;
+      _transform.value = Matrix4.identity()
+        ..setEntry(0, 0, scale)
+        ..setEntry(1, 1, scale)
+        ..setEntry(0, 3, focalPoint.dx - scenePoint.dx * scale)
+        ..setEntry(1, 3, focalPoint.dy - scenePoint.dy * scale);
+      return;
+    }
+
+    // At Fit, a drag belongs exclusively to page navigation. The image
+    // transform must remain unchanged while the swipe is being measured.
+    if (_gestureStartedAtFit || !_canPanAtScale(_gestureStartScale)) return;
+
+    final image = _imageSize!;
+    final viewer = _viewerSize!;
+    final width = image.width * _gestureStartScale;
+    final height = image.height * _gestureStartScale;
+    _transform.value = Matrix4.copy(start)
+      ..setEntry(
+        0,
+        3,
+        start.entry(0, 3) + (width > viewer.width ? _gestureDistance.dx : 0),
+      )
+      ..setEntry(
+        1,
+        3,
+        start.entry(1, 3) + (height > viewer.height ? _gestureDistance.dy : 0),
+      );
+  }
+
+  void _endImageGesture(ScaleEndDetails _) {
+    if (_gestureStartedAtFit && !_gestureScaled && _canSwipeImages) {
+      _finishImageSwipe(_gestureDistance);
+    } else {
+      _constrainImagePosition();
+    }
+    _gestureStartTransform = null;
+    _gestureStartScenePoint = null;
+    _gestureDistance = Offset.zero;
+  }
+
   void _handleTransformChanged() {
     final atFit = _matchesFitTransform();
     if (!mounted || atFit == _imageAtFit) return;
@@ -162,10 +230,7 @@ class _VaultPageState extends State<VaultPage> {
     final image = _imageSize;
     final viewer = _viewerSize;
     if (image == null || viewer == null) return true;
-    final scale = math
-        .min(viewer.width / image.width, viewer.height / image.height)
-        .clamp(0.01, 8.0)
-        .toDouble();
+    final scale = _fitScale;
     final x = (viewer.width - image.width * scale) / 2;
     final y = (viewer.height - image.height * scale) / 2;
     final matrix = _transform.value;
@@ -173,6 +238,49 @@ class _VaultPageState extends State<VaultPage> {
     return (matrix.getMaxScaleOnAxis() - scale).abs() <= scaleTolerance &&
         (matrix.entry(0, 3) - x).abs() <= .5 &&
         (matrix.entry(1, 3) - y).abs() <= .5;
+  }
+
+  double get _fitScale {
+    final image = _imageSize;
+    final viewer = _viewerSize;
+    if (image == null || viewer == null) return 1;
+    return math
+        .min(viewer.width / image.width, viewer.height / image.height)
+        .clamp(0.01, 8.0)
+        .toDouble();
+  }
+
+  double get _minimumScale => math.min(_fitScale, 1);
+
+  bool _canPanAtScale(double scale) {
+    final image = _imageSize;
+    final viewer = _viewerSize;
+    if (image == null || viewer == null) return false;
+    return image.width * scale > viewer.width + .5 ||
+        image.height * scale > viewer.height + .5;
+  }
+
+  void _constrainImagePosition() {
+    final image = _imageSize;
+    final viewer = _viewerSize;
+    if (image == null || viewer == null) return;
+    final matrix = _transform.value;
+    final scale = matrix.getMaxScaleOnAxis();
+    final width = image.width * scale;
+    final height = image.height * scale;
+    final x = width <= viewer.width
+        ? (viewer.width - width) / 2
+        : matrix.entry(0, 3).clamp(viewer.width - width, 0).toDouble();
+    final y = height <= viewer.height
+        ? (viewer.height - height) / 2
+        : matrix.entry(1, 3).clamp(viewer.height - height, 0).toDouble();
+    if ((matrix.entry(0, 3) - x).abs() <= .5 &&
+        (matrix.entry(1, 3) - y).abs() <= .5) {
+      return;
+    }
+    _transform.value = Matrix4.copy(matrix)
+      ..setEntry(0, 3, x)
+      ..setEntry(1, 3, y);
   }
 
   void _showNavigationCue(int direction) {
@@ -215,11 +323,7 @@ class _VaultPageState extends State<VaultPage> {
       _transform.value = Matrix4.identity();
       return;
     }
-    final scale = math
-        .min(viewer.width / image.width, viewer.height / image.height)
-        .clamp(0.01, 8.0)
-        .toDouble();
-    _setScale(scale);
+    _setScale(_fitScale);
   }
 
   void _oneToOne() => _setScale(1);
@@ -239,7 +343,7 @@ class _VaultPageState extends State<VaultPage> {
 
   void _zoom(double factor) {
     final current = _transform.value.getMaxScaleOnAxis();
-    final next = (current * factor).clamp(0.25, 8.0);
+    final next = (current * factor).clamp(_minimumScale, 8.0);
     _setScale(next.toDouble());
   }
 
@@ -409,62 +513,27 @@ class _VaultPageState extends State<VaultPage> {
                               style: TextStyle(color: Colors.white38),
                             ),
                           )
-                        : Listener(
+                        : GestureDetector(
                             behavior: HitTestBehavior.opaque,
-                            onPointerDown: (event) {
-                              if (_swipePointer != null) {
-                                _swipePointer = null;
-                                _swipeStart = null;
-                              } else if (_canSwipeImages) {
-                                _swipePointer = event.pointer;
-                                _swipeStart = event.localPosition;
-                              }
-                            },
-                            onPointerUp: (event) {
-                              if (event.pointer != _swipePointer) return;
-                              final start = _swipeStart;
-                              _swipePointer = null;
-                              _swipeStart = null;
-                              if (start != null) {
-                                _finishImageSwipe(event.localPosition - start);
-                              }
-                            },
-                            onPointerCancel: (event) {
-                              if (event.pointer != _swipePointer) return;
-                              _swipePointer = null;
-                              _swipeStart = null;
-                            },
-                            onPointerPanZoomStart: (_) {
-                              _trackingTrackpadSwipe = _canSwipeImages;
-                              _trackpadSwipe = Offset.zero;
-                            },
-                            onPointerPanZoomUpdate: (event) {
-                              if (_trackingTrackpadSwipe) {
-                                _trackpadSwipe += event.panDelta;
-                              }
-                            },
-                            onPointerPanZoomEnd: (_) {
-                              if (_trackingTrackpadSwipe) {
-                                _finishImageSwipe(_trackpadSwipe);
-                              }
-                              _trackingTrackpadSwipe = false;
-                              _trackpadSwipe = Offset.zero;
-                            },
+                            trackpadScrollCausesScale: false,
+                            onScaleStart: _startImageGesture,
+                            onScaleUpdate: _updateImageGesture,
+                            onScaleEnd: _endImageGesture,
                             child: Stack(
                               fit: StackFit.expand,
                               children: [
-                                InteractiveViewer(
-                                  transformationController: _transform,
-                                  constrained: false,
-                                  boundaryMargin: const EdgeInsets.all(
-                                    double.infinity,
-                                  ),
-                                  panEnabled: !_imageAtFit,
-                                  minScale: .01,
-                                  maxScale: 8,
-                                  child: SizedBox(
-                                    width: _imageSize?.width,
-                                    height: _imageSize?.height,
+                                Positioned(
+                                  left: 0,
+                                  top: 0,
+                                  width: _imageSize?.width ?? 0,
+                                  height: _imageSize?.height ?? 0,
+                                  child: AnimatedBuilder(
+                                    animation: _transform,
+                                    builder: (context, child) => Transform(
+                                      transform: _transform.value,
+                                      alignment: Alignment.topLeft,
+                                      child: child,
+                                    ),
                                     child: Image.file(
                                       sample.file,
                                       fit: BoxFit.fill,
