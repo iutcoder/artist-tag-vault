@@ -266,7 +266,7 @@ class DanbooruAutocompleteService {
             'id,name,category,post_count,is_deprecated,'
             'antecedent_alias[id]',
         'limit': '$_pageSize',
-        'page': '$page',
+        'page': page.toString(),
       },
     );
     http.Response? response;

@@ -743,7 +743,7 @@ class _HomePageState extends State<HomePage> {
                   shrinkWrap: true,
                   buildDefaultDragHandles: false,
                   itemCount: _customArtists.length,
-                  onReorder: _busy ? (_, __) {} : _reorderCustomArtist,
+                  onReorderItem: _busy ? null : _reorderCustomArtist,
                   itemBuilder: (context, index) {
                     final artist = _customArtists[index];
                     return ListTile(
@@ -816,7 +816,6 @@ class _HomePageState extends State<HomePage> {
 
   void _reorderCustomArtist(int oldIndex, int newIndex) {
     setState(() {
-      if (newIndex > oldIndex) newIndex--;
       final artist = _customArtists.removeAt(oldIndex);
       _customArtists.insert(newIndex, artist);
     });
@@ -1325,6 +1324,7 @@ class _CustomArtistDialogState extends State<_CustomArtistDialog> {
               controller: _controller,
               focusNode: _focusNode,
               service: widget.service,
+              enabled: true,
               onSubmitted: (_) => _submit(),
             ),
             const SizedBox(height: 14),
