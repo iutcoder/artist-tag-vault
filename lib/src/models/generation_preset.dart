@@ -14,6 +14,13 @@ enum NovelAiModel {
   final String apiId;
 
   bool get isV5 => this == v5Full || this == v5Curated;
+
+  /// Numeric emphasis is available from V4 onward.
+  bool get supportsNumericalEmphasis => this != animeV3;
+
+  /// Negative numeric emphasis is supported by V4.5 and later models.
+  bool get supportsNegativeNumericalEmphasis =>
+      isV5 || this == v45Full || this == v45Curated;
 }
 
 /// Human-readable sampler entry paired with its API identifier.
@@ -78,6 +85,13 @@ class ImageDimensions {
 
 /// Reusable generation values applied consistently to every artist sample.
 class GenerationPreset {
+  static const int minimumSteps = 1;
+  static const int maximumSteps = 50;
+  static const double minimumGuidance = 0;
+  static const double maximumGuidance = 10;
+  static const double minimumGuidanceRescale = 0;
+  static const double maximumGuidanceRescale = 1;
+
   const GenerationPreset({
     required this.model,
     required this.steps,
@@ -191,12 +205,23 @@ class GenerationPreset {
 
   factory GenerationPreset.fromJson(Map<String, dynamic> json) {
     final defaults = GenerationPreset.defaults();
+    final steps = (json['steps'] as num?)?.toInt() ?? defaults.steps;
+    final guidance =
+        (json['guidance'] as num?)?.toDouble() ?? defaults.guidance;
+    final guidanceRescale =
+        (json['guidanceRescale'] as num?)?.toDouble() ??
+            defaults.guidanceRescale;
     return GenerationPreset(
       model: _enumByName(NovelAiModel.values, json['model']) ?? defaults.model,
-      steps: (json['steps'] as num?)?.toInt() ?? defaults.steps,
-      guidance: (json['guidance'] as num?)?.toDouble() ?? defaults.guidance,
-      guidanceRescale: (json['guidanceRescale'] as num?)?.toDouble() ??
-          defaults.guidanceRescale,
+      // Clamp older preferences as they are loaded so invalid values cannot
+      // bypass the current UI limits.
+      steps: steps.clamp(minimumSteps, maximumSteps).toInt(),
+      guidance: guidance
+          .clamp(minimumGuidance, maximumGuidance)
+          .toDouble(),
+      guidanceRescale: guidanceRescale
+          .clamp(minimumGuidanceRescale, maximumGuidanceRescale)
+          .toDouble(),
       sampler:
           _enumByName(NovelAiSampler.values, json['sampler']) ?? defaults.sampler,
       noiseSchedule:

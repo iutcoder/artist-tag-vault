@@ -1,5 +1,4 @@
 import 'dart:convert';
-import 'dart:math';
 import 'dart:typed_data';
 
 import 'package:artist_tag_vault/src/models/account_usage.dart';
@@ -78,8 +77,8 @@ class NovelAiApi {
     required String token,
     required String prompt,
     required GenerationPreset preset,
+    required int seed,
   }) async {
-    final seed = Random.secure().nextInt(0x7fffffff);
     final parameters = <String, Object>{
       'params_version': 3,
       'width': preset.width,

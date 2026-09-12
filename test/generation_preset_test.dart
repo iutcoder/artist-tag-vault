@@ -26,4 +26,23 @@ void main() {
     expect(preset.aspectRatio, ImageAspectRatioPreset.landscape);
     expect(preset.resolution, ImageResolutionPreset.normal);
   });
+
+  test('out-of-range numeric preferences are clamped while loading', () {
+    final preset = GenerationPreset.fromJson({
+      'steps': 99,
+      'guidance': -3,
+      'guidanceRescale': 2.5,
+    });
+    expect(preset.steps, 50);
+    expect(preset.guidance, 0);
+    expect(preset.guidanceRescale, 1);
+  });
+
+  test('negative emphasis is enabled only for V4.5 and newer models', () {
+    expect(NovelAiModel.animeV3.supportsNumericalEmphasis, isFalse);
+    expect(NovelAiModel.v4Full.supportsNumericalEmphasis, isTrue);
+    expect(NovelAiModel.v4Full.supportsNegativeNumericalEmphasis, isFalse);
+    expect(NovelAiModel.v45Full.supportsNegativeNumericalEmphasis, isTrue);
+    expect(NovelAiModel.v5Full.supportsNegativeNumericalEmphasis, isTrue);
+  });
 }

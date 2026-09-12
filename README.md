@@ -12,13 +12,16 @@ documentation. It is not affiliated with or endorsed by NovelAI.
 
 - macOS (Apple Silicon) first, Windows 10/11 x64 target
 - automatic `artist:` prefix
-- reusable model, steps, guidance, rescale, sampler, schedule, prompt, and UC
+- reusable model, range-limited slider/spin-box controls, sampler, schedule,
+  prompt, and UC
 - separate aspect-ratio and resolution presets with resolved pixel dimensions
+- editable 32-bit seed with a lock for controlled artist comparisons
+- per-sample artist-tag weight from `-5.00` to `+5.00`
 - API token test using `GET /user/subscription` (does not generate an image)
 - live Subscription/Paid Anlas balances and V5 rechargeable allowance status
 - token storage in macOS Keychain / Windows Credential Manager
 - automatic PNG and JSON sidecar storage
-- latest image preview and an Open Folder action
+- folding latest-image preview and an Open Folder action
 
 Samples use this future-gallery-friendly layout:
 

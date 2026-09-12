@@ -19,6 +19,7 @@ class SampleStorage {
     required String artist,
     required String composedPrompt,
     required int seed,
+    required double artistWeight,
     required GenerationPreset preset,
   }) async {
     final root = await rootDirectory();
@@ -40,6 +41,7 @@ class SampleStorage {
       const JsonEncoder.withIndent('  ').convert({
         'artist': artist.trim(),
         'artistTag': 'artist:${artist.trim()}',
+        'artistWeight': artistWeight,
         'generatedAt': generatedAt.toIso8601String(),
         'seed': seed,
         'composedPrompt': composedPrompt,

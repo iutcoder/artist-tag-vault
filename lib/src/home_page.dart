@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:io';
+import 'dart:math';
 
 import 'package:artist_tag_vault/src/models/account_usage.dart';
 import 'package:artist_tag_vault/src/models/app_settings.dart';
@@ -9,6 +10,7 @@ import 'package:artist_tag_vault/src/services/sample_storage.dart';
 import 'package:artist_tag_vault/src/services/settings_store.dart';
 import 'package:artist_tag_vault/src/settings_dialog.dart';
 import 'package:artist_tag_vault/src/widgets/glass_panel.dart';
+import 'package:artist_tag_vault/src/widgets/numeric_stepper_field.dart';
 import 'package:flutter/material.dart';
 
 /// Main artist entry, generation action, and latest-sample preview.
@@ -20,10 +22,13 @@ class HomePage extends StatefulWidget {
 }
 
 class _HomePageState extends State<HomePage> {
+  static const int _maximumSeed = 0xffffffff;
+
   final _artistController = TextEditingController();
   final _settingsStore = SettingsStore();
   final _api = NovelAiApi();
   final _sampleStorage = SampleStorage();
+  final _random = Random.secure();
 
   AppSettings _settings = AppSettings.defaults();
   File? _previewFile;
@@ -33,10 +38,14 @@ class _HomePageState extends State<HomePage> {
   AccountUsage? _accountUsage;
   bool _usageLoading = false;
   String? _usageError;
+  late int _seed;
+  bool _seedLocked = false;
+  double _artistWeight = 1;
 
   @override
   void initState() {
     super.initState();
+    _seed = _createRandomSeed();
     _loadSettings();
   }
 
@@ -97,12 +106,29 @@ class _HomePageState extends State<HomePage> {
       return;
     }
 
+    final model = _settings.preset.model;
+    if ((_artistWeight - 1).abs() >= 0.000001 &&
+        !model.supportsNumericalEmphasis) {
+      _showError('이 모델은 숫자 가중치를 지원하지 않습니다. 가중치를 1.00으로 설정해 주세요.');
+      return;
+    }
+    if (_artistWeight < 0 && !model.supportsNegativeNumericalEmphasis) {
+      _showError('음수 가중치는 NovelAI Diffusion V4.5 이상에서 사용할 수 있습니다.');
+      return;
+    }
+
+    // An unlocked seed advances immediately before each request. A locked
+    // seed remains unchanged so artists can be compared under the same noise.
+    final requestSeed = _seedLocked ? _seed : _createRandomSeed();
+
     final prompt = PromptComposer.compose(
       artist: artist,
       presetPrompt: _settings.preset.prompt,
+      artistWeight: _artistWeight,
     );
     setState(() {
       _busy = true;
+      _seed = requestSeed;
       _status = 'Generating artist:$artist…';
     });
 
@@ -111,17 +137,20 @@ class _HomePageState extends State<HomePage> {
         token: _settings.apiToken,
         prompt: prompt,
         preset: _settings.preset,
+        seed: requestSeed,
       );
       final file = await _sampleStorage.save(
         bytes: generated.bytes,
         artist: artist,
         composedPrompt: prompt,
         seed: generated.seed,
+        artistWeight: _artistWeight,
         preset: _settings.preset,
       );
       if (!mounted) return;
       setState(() {
         _previewFile = file;
+        _seed = generated.seed;
         _status = 'Saved · ${file.path}';
       });
       unawaited(_refreshUsage());
@@ -175,6 +204,12 @@ class _HomePageState extends State<HomePage> {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text(message)),
     );
+  }
+
+  int _createRandomSeed() {
+    // Joining two 16-bit values covers NovelAI's unsigned 32-bit seed range
+    // without relying on a platform-specific nextInt upper-bound behavior.
+    return (_random.nextInt(1 << 16) << 16) | _random.nextInt(1 << 16);
   }
 
   @override
@@ -317,6 +352,56 @@ class _HomePageState extends State<HomePage> {
               prefixText: 'artist:',
               hintText: 'artist name',
             ),
+          ),
+          const SizedBox(height: 12),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              Expanded(
+                child: NumericStepperField(
+                  value: _seed.toDouble(),
+                  minimum: 0,
+                  maximum: _maximumSeed.toDouble(),
+                  step: 1,
+                  decimalPlaces: 0,
+                  enabled: !_busy,
+                  labelText: 'Seed',
+                  onChanged: (value) =>
+                      setState(() => _seed = value.round()),
+                ),
+              ),
+              const SizedBox(width: 8),
+              IconButton.filledTonal(
+                tooltip: _seedLocked ? 'Unlock seed' : 'Lock seed',
+                style: _seedLocked
+                    ? IconButton.styleFrom(
+                        backgroundColor:
+                            Theme.of(context).colorScheme.primaryContainer,
+                        foregroundColor:
+                            Theme.of(context).colorScheme.onPrimaryContainer,
+                      )
+                    : null,
+                onPressed: _busy
+                    ? null
+                    : () => setState(() => _seedLocked = !_seedLocked),
+                icon: Icon(
+                  _seedLocked
+                      ? Icons.lock_rounded
+                      : Icons.lock_open_rounded,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 12),
+          NumericStepperField(
+            value: _artistWeight,
+            minimum: -5,
+            maximum: 5,
+            step: 0.01,
+            decimalPlaces: 2,
+            enabled: !_busy,
+            labelText: 'Artist weight  ·  −5.00 to +5.00',
+            onChanged: (value) => setState(() => _artistWeight = value),
           ),
           const SizedBox(height: 14),
           FilledButton.icon(
@@ -610,8 +695,28 @@ class _PreviewHeader extends StatelessWidget {
       ),
     );
 
-    if (!compact && !expanded) {
-      return Center(child: button);
+    if (!compact) {
+      if (!expanded) return Center(child: button);
+
+      // In the right-hand preview, keep the folding control next to the panel
+      // title instead of sending it to the distant upper-right corner.
+      return Row(
+        children: [
+          button,
+          const SizedBox(width: 2),
+          const Icon(Icons.image_outlined, size: 18, color: Colors.white54),
+          const SizedBox(width: 8),
+          const Text(
+            'PREVIEW',
+            style: TextStyle(
+              color: Colors.white60,
+              fontSize: 11,
+              letterSpacing: 1.4,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+        ],
+      );
     }
 
     return Row(

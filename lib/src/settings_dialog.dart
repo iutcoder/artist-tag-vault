@@ -1,6 +1,7 @@
 import 'package:artist_tag_vault/src/models/app_settings.dart';
 import 'package:artist_tag_vault/src/models/generation_preset.dart';
 import 'package:artist_tag_vault/src/services/novelai_api.dart';
+import 'package:artist_tag_vault/src/widgets/numeric_stepper_field.dart';
 import 'package:flutter/material.dart';
 
 /// Edits a complete preset and tests the token before the caller persists it.
@@ -20,11 +21,11 @@ class SettingsDialog extends StatefulWidget {
 
 class _SettingsDialogState extends State<SettingsDialog> {
   late final TextEditingController _token;
-  late final TextEditingController _steps;
-  late final TextEditingController _guidance;
-  late final TextEditingController _rescale;
   late final TextEditingController _prompt;
   late final TextEditingController _undesired;
+  late int _steps;
+  late double _guidance;
+  late double _rescale;
   late NovelAiModel _model;
   late NovelAiSampler _sampler;
   late NoiseSchedule _noiseSchedule;
@@ -38,10 +39,9 @@ class _SettingsDialogState extends State<SettingsDialog> {
     super.initState();
     final settings = widget.initialSettings;
     _token = TextEditingController(text: settings.apiToken);
-    _steps = TextEditingController(text: settings.preset.steps.toString());
-    _guidance = TextEditingController(text: settings.preset.guidance.toString());
-    _rescale =
-        TextEditingController(text: settings.preset.guidanceRescale.toString());
+    _steps = settings.preset.steps;
+    _guidance = settings.preset.guidance;
+    _rescale = settings.preset.guidanceRescale;
     _prompt = TextEditingController(text: settings.preset.prompt);
     _undesired = TextEditingController(text: settings.preset.undesiredContent);
     _model = settings.preset.model;
@@ -54,9 +54,6 @@ class _SettingsDialogState extends State<SettingsDialog> {
   @override
   void dispose() {
     _token.dispose();
-    _steps.dispose();
-    _guidance.dispose();
-    _rescale.dispose();
     _prompt.dispose();
     _undesired.dispose();
     super.dispose();
@@ -76,25 +73,14 @@ class _SettingsDialogState extends State<SettingsDialog> {
   }
 
   void _save() {
-    final steps = int.tryParse(_steps.text);
-    final guidance = double.tryParse(_guidance.text);
-    final rescale = double.tryParse(_rescale.text);
-    if (steps == null || steps < 1 || steps > 50 || guidance == null ||
-        rescale == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('숫자 설정을 확인해 주세요. Steps는 1–50입니다.')),
-      );
-      return;
-    }
-
     Navigator.of(context).pop(
       AppSettings(
         apiToken: _token.text.trim(),
         preset: widget.initialSettings.preset.copyWith(
           model: _model,
-          steps: steps,
-          guidance: guidance,
-          guidanceRescale: rescale,
+          steps: _steps,
+          guidance: _guidance,
+          guidanceRescale: _rescale,
           sampler: _sampler,
           noiseSchedule: _noiseSchedule,
           aspectRatio: _aspectRatio,
@@ -208,10 +194,8 @@ class _SettingsDialogState extends State<SettingsDialog> {
                   Expanded(
                     child: DropdownButtonFormField<ImageResolutionPreset>(
                       initialValue: _resolution,
-                      decoration: InputDecoration(
-                        labelText: 'Resolution',
-                        helperText: _selectedDimensions.label,
-                      ),
+                      decoration:
+                          const InputDecoration(labelText: 'Resolution'),
                       items: ImageResolutionPreset.values
                           .map((resolution) => DropdownMenuItem(
                                 value: resolution,
@@ -225,15 +209,45 @@ class _SettingsDialogState extends State<SettingsDialog> {
                   ),
                 ],
               ),
-              const SizedBox(height: 12),
-              Row(
-                children: [
-                  Expanded(child: _numberField(_steps, 'Steps')),
-                  const SizedBox(width: 12),
-                  Expanded(child: _numberField(_guidance, 'Prompt guidance')),
-                  const SizedBox(width: 12),
-                  Expanded(child: _numberField(_rescale, 'Guidance rescale')),
-                ],
+              const SizedBox(height: 6),
+              Align(
+                alignment: Alignment.centerRight,
+                child: Text(
+                  'Canvas · ${_selectedDimensions.label}',
+                  style: const TextStyle(color: Colors.white54, fontSize: 12),
+                ),
+              ),
+              const SizedBox(height: 8),
+              _SliderSettingRow(
+                label: 'Steps',
+                value: _steps.toDouble(),
+                minimum: GenerationPreset.minimumSteps.toDouble(),
+                maximum: GenerationPreset.maximumSteps.toDouble(),
+                divisions: GenerationPreset.maximumSteps -
+                    GenerationPreset.minimumSteps,
+                step: 1,
+                decimalPlaces: 0,
+                onChanged: (value) => setState(() => _steps = value.round()),
+              ),
+              _SliderSettingRow(
+                label: 'Prompt guidance',
+                value: _guidance,
+                minimum: GenerationPreset.minimumGuidance,
+                maximum: GenerationPreset.maximumGuidance,
+                divisions: 100,
+                step: 0.1,
+                decimalPlaces: 2,
+                onChanged: (value) => setState(() => _guidance = value),
+              ),
+              _SliderSettingRow(
+                label: 'Guidance rescale',
+                value: _rescale,
+                minimum: GenerationPreset.minimumGuidanceRescale,
+                maximum: GenerationPreset.maximumGuidanceRescale,
+                divisions: 100,
+                step: 0.01,
+                decimalPlaces: 2,
+                onChanged: (value) => setState(() => _rescale = value),
               ),
               const SizedBox(height: 12),
               Row(
@@ -299,15 +313,67 @@ class _SettingsDialogState extends State<SettingsDialog> {
     );
   }
 
-  Widget _numberField(TextEditingController controller, String label) {
-    return TextField(
-      controller: controller,
-      keyboardType: const TextInputType.numberWithOptions(decimal: true),
-      decoration: InputDecoration(labelText: label),
-    );
-  }
-
   ImageDimensions get _selectedDimensions => GenerationPreset.defaults()
       .copyWith(aspectRatio: _aspectRatio, resolution: _resolution)
       .dimensions;
+}
+
+/// Keeps a precise spin box and a quick slider in sync on one readable row.
+class _SliderSettingRow extends StatelessWidget {
+  const _SliderSettingRow({
+    required this.label,
+    required this.value,
+    required this.minimum,
+    required this.maximum,
+    required this.divisions,
+    required this.step,
+    required this.decimalPlaces,
+    required this.onChanged,
+  });
+
+  final String label;
+  final double value;
+  final double minimum;
+  final double maximum;
+  final int divisions;
+  final double step;
+  final int decimalPlaces;
+  final ValueChanged<double> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: Row(
+        children: [
+          SizedBox(
+            width: 126,
+            child: Text(label, style: const TextStyle(color: Colors.white70)),
+          ),
+          Expanded(
+            child: Slider(
+              value: value.clamp(minimum, maximum).toDouble(),
+              min: minimum,
+              max: maximum,
+              divisions: divisions,
+              label: value.toStringAsFixed(decimalPlaces),
+              onChanged: onChanged,
+            ),
+          ),
+          const SizedBox(width: 8),
+          SizedBox(
+            width: 112,
+            child: NumericStepperField(
+              value: value,
+              minimum: minimum,
+              maximum: maximum,
+              step: step,
+              decimalPlaces: decimalPlaces,
+              onChanged: onChanged,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 }
