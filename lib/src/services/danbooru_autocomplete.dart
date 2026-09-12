@@ -73,6 +73,7 @@ class DanbooruAutocompleteService {
   DateTime? _updatedAt;
   Future<void>? _loadOperation;
   bool _updating = false;
+  int _operationGeneration = 0;
 
   Future<DanbooruDictionaryStatus> status() async {
     await (_loadOperation ??= _loadDictionary());
@@ -117,24 +118,30 @@ class DanbooruAutocompleteService {
       );
     }
     _updating = true;
+    final operation = ++_operationGeneration;
     try {
       final downloaded = <String, DanbooruArtistSuggestion>{};
       var cursor = '1';
-      for (var pageNumber = 1; pageNumber <= 200; pageNumber++) {
+      final visitedCursors = <String>{};
+      while (visitedCursors.add(cursor)) {
+        _ensureActive(operation);
         final page = await _downloadPage(cursor);
+        _ensureActive(operation);
         for (final entry in page.artists) {
           downloaded[entry.value] = entry;
         }
         onProgress?.call(downloaded.length);
-        if (page.artists.length < _pageSize || page.lastId == null) break;
+        if (page.recordCount < _pageSize || page.lastId == null) break;
         if (_pageDelay > Duration.zero) await Future<void>.delayed(_pageDelay);
-        cursor = 'b${page.lastId}';
-        if (pageNumber == 200) {
+        final nextCursor = 'b${page.lastId}';
+        if (visitedCursors.contains(nextCursor)) {
           throw const DanbooruAutocompleteException(
-            'Artist dictionary exceeded the pagination safety limit.',
+            'Danbooru pagination returned a repeated page.',
           );
         }
+        cursor = nextCursor;
       }
+      _ensureActive(operation);
       if (downloaded.isEmpty) {
         throw const DanbooruAutocompleteException(
           'Danbooru returned an empty artist dictionary.',
@@ -147,7 +154,9 @@ class DanbooruAutocompleteService {
           return countOrder != 0 ? countOrder : a.value.compareTo(b.value);
         });
       final updatedAt = DateTime.now().toUtc();
+      _ensureActive(operation);
       await _saveDictionary(artists, updatedAt);
+      _ensureActive(operation);
       _artists = List.unmodifiable(artists);
       _updatedAt = updatedAt;
       return DanbooruDictionaryStatus(
@@ -155,7 +164,7 @@ class DanbooruAutocompleteService {
         updatedAt: updatedAt,
       );
     } finally {
-      _updating = false;
+      if (_operationGeneration == operation) _updating = false;
     }
   }
 
@@ -166,6 +175,7 @@ class DanbooruAutocompleteService {
       );
     }
     _updating = true;
+    final operation = ++_operationGeneration;
     try {
       final decoded = jsonDecode(source);
       final List entries;
@@ -187,15 +197,18 @@ class DanbooruAutocompleteService {
         final category = int.tryParse(raw['category']?.toString() ?? '');
         final isArtist = isInternalEntry || type == 'artist' || category == 1;
         final isDeprecated = raw['is_deprecated'] == true;
-        if (!isArtist || isDeprecated) continue;
-        final name = (raw['value'] ?? raw['name'] ?? raw['label'])
-            ?.toString()
-            .trim();
-        if (name == null || name.isEmpty) continue;
         final count = int.tryParse(
               (raw['count'] ?? raw['post_count'])?.toString() ?? '',
             ) ??
             0;
+        final isRedirected = raw['antecedent_alias'] != null ||
+            raw['is_alias'] == true ||
+            raw['redirect_to'] != null;
+        if (!isArtist || isDeprecated || count <= 0 || isRedirected) continue;
+        final name = (raw['value'] ?? raw['name'] ?? raw['label'])
+            ?.toString()
+            .trim();
+        if (name == null || name.isEmpty) continue;
         imported[name] = DanbooruArtistSuggestion(value: name, count: count);
       }
       if (imported.isEmpty) {
@@ -209,7 +222,9 @@ class DanbooruAutocompleteService {
           return countOrder != 0 ? countOrder : a.value.compareTo(b.value);
         });
       final updatedAt = DateTime.now().toUtc();
+      _ensureActive(operation);
       await _saveDictionary(artists, updatedAt);
+      _ensureActive(operation);
       _artists = List.unmodifiable(artists);
       _updatedAt = updatedAt;
       return DanbooruDictionaryStatus(
@@ -221,7 +236,21 @@ class DanbooruAutocompleteService {
         'The selected file is not valid JSON.',
       );
     } finally {
-      _updating = false;
+      if (_operationGeneration == operation) _updating = false;
+    }
+  }
+
+  void cancelUpdate() {
+    if (!_updating) return;
+    _operationGeneration++;
+    _updating = false;
+  }
+
+  void _ensureActive(int operation) {
+    if (_operationGeneration != operation) {
+      throw const DanbooruAutocompleteException(
+        'Artist dictionary update was cancelled.',
+      );
     }
   }
 
@@ -233,6 +262,9 @@ class DanbooruAutocompleteService {
         'search[hide_empty]': 'true',
         'search[is_deprecated]': 'false',
         'search[order]': 'date',
+        'only':
+            'id,name,category,post_count,is_deprecated,'
+            'antecedent_alias[id]',
         'limit': '$_pageSize',
         'page': '$page',
       },
@@ -285,6 +317,15 @@ class DanbooruAutocompleteService {
     }
     final records = decoded.whereType<Map>().toList(growable: false);
     final artists = records
+        .where((item) {
+          final category = int.tryParse(item['category']?.toString() ?? '');
+          final postCount =
+              int.tryParse(item['post_count']?.toString() ?? '') ?? 0;
+          return category == 1 &&
+              item['is_deprecated'] != true &&
+              postCount > 0 &&
+              item['antecedent_alias'] == null;
+        })
         .map(
           (item) => DanbooruArtistSuggestion(
             value: item['name']?.toString().trim() ?? '',
@@ -295,6 +336,7 @@ class DanbooruAutocompleteService {
         .toList(growable: false);
     return _DanbooruArtistPage(
       artists: artists,
+      recordCount: records.length,
       lastId: records.isEmpty
           ? null
           : int.tryParse(records.last['id']?.toString() ?? ''),
@@ -386,8 +428,13 @@ class DanbooruAutocompleteException implements Exception {
 }
 
 class _DanbooruArtistPage {
-  const _DanbooruArtistPage({required this.artists, required this.lastId});
+  const _DanbooruArtistPage({
+    required this.artists,
+    required this.recordCount,
+    required this.lastId,
+  });
 
   final List<DanbooruArtistSuggestion> artists;
+  final int recordCount;
   final int? lastId;
 }

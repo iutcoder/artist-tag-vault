@@ -40,6 +40,7 @@ class _SettingsDialogState extends State<SettingsDialog> {
 
   @override
   void dispose() {
+    if (_updatingDictionary) widget.artistDictionary.cancelUpdate();
     _token.dispose();
     super.dispose();
   }
@@ -245,17 +246,27 @@ class _SettingsDialogState extends State<SettingsDialog> {
       ),
       actions: [
         TextButton(
-          onPressed: () => Navigator.of(context).pop(),
+          onPressed: _closeWithoutSaving,
           child: const Text('Cancel'),
         ),
         FilledButton(
-          onPressed: () => Navigator.of(
-            context,
-          ).pop(widget.initialSettings.copyWith(apiToken: _token.text.trim())),
+          onPressed: _saveAndClose,
           child: const Text('Save'),
         ),
       ],
     );
+  }
+
+  void _closeWithoutSaving() {
+    if (_updatingDictionary) widget.artistDictionary.cancelUpdate();
+    Navigator.of(context).pop();
+  }
+
+  void _saveAndClose() {
+    if (_updatingDictionary) widget.artistDictionary.cancelUpdate();
+    Navigator.of(
+      context,
+    ).pop(widget.initialSettings.copyWith(apiToken: _token.text.trim()));
   }
 
   String _dictionaryStatusLabel() {
