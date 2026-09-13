@@ -6,6 +6,7 @@ import 'package:artist_tag_vault/src/models/custom_artist.dart';
 import 'package:artist_tag_vault/src/models/generation_preset.dart';
 import 'package:artist_tag_vault/src/models/saved_sample.dart';
 import 'package:artist_tag_vault/src/services/png_metadata_reader.dart';
+import 'package:artist_tag_vault/src/services/prompt_composer.dart';
 import 'package:path/path.dart' as path;
 import 'package:path_provider/path_provider.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -61,7 +62,17 @@ class SampleStorage {
       const JsonEncoder.withIndent('  ').convert({
         'artist': storedArtist,
         'isCustom': isCustom,
-        if (!isCustom) 'artistTag': 'artist:${artist.trim()}',
+        if (!isCustom)
+          'artistTag': PromptComposer.formatArtistTag(artist, artistWeight),
+        if (isCustom)
+          'artistTags': customArtists
+              .map(
+                (artist) => PromptComposer.formatArtistTag(
+                  artist.name,
+                  artist.weight,
+                ),
+              )
+              .toList(),
         if (isCustom)
           'customArtists': customArtists
               .map((artist) => artist.toJson())

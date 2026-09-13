@@ -1,5 +1,8 @@
 import 'dart:io';
 
+import 'package:artist_tag_vault/src/models/custom_artist.dart';
+import 'package:artist_tag_vault/src/services/prompt_composer.dart';
+
 enum SampleSubject { female, male, others }
 
 /// One PNG discovered in the sample vault with its embedded generation data.
@@ -26,6 +29,27 @@ class SavedSample {
   bool get isCustom => metadata['isCustom'] == true;
   String get vaultGroupKey => isCustom ? 'custom:' : 'artist:$artist';
   String get vaultGroupLabel => isCustom ? 'Artist Mixes' : artist;
+
+  String get artistTags {
+    if (isCustom) {
+      final rawArtists = metadata['customArtists'];
+      if (rawArtists is List) {
+        return rawArtists
+            .map(CustomArtist.fromJson)
+            .whereType<CustomArtist>()
+            .map(
+              (artist) => PromptComposer.formatArtistTag(
+                artist.name,
+                artist.weight,
+              ),
+            )
+            .join(', ');
+      }
+      return '';
+    }
+    final weight = (metadata['artistWeight'] as num?)?.toDouble() ?? 1;
+    return PromptComposer.formatArtistTag(artist, weight);
+  }
 
   SampleSubject get subject {
     final normalized = prompt.toLowerCase();

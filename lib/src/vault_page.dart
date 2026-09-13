@@ -1202,11 +1202,16 @@ class _VaultPageState extends State<VaultPage> {
               Expanded(
                 child: ListView(
                   children: [
-                    _InfoLine('Artist', sample.artist),
+                    _InfoLine(
+                      'Artist',
+                      sample.artist,
+                      copyValue: sample.isCustom ? null : sample.artistTags,
+                    ),
                     if (sample.isCustom)
                       _InfoLine(
                         'Artists',
                         _customArtistSummary(sample) ?? 'See final prompt below',
+                        copyValue: sample.artistTags,
                       ),
                     _InfoLine('Model', sample.modelId),
                     _InfoLine('Seed', sample.seed?.toString() ?? '—'),
@@ -1321,24 +1326,49 @@ class _NavigationCue extends StatelessWidget {
 }
 
 class _InfoLine extends StatelessWidget {
-  const _InfoLine(this.label, this.value);
+  const _InfoLine(this.label, this.value, {this.copyValue});
   final String label;
   final String value;
+  final String? copyValue;
 
   @override
-  Widget build(BuildContext context) => Padding(
-    padding: const EdgeInsets.symmetric(vertical: 5),
-    child: Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        SizedBox(
-          width: 82,
-          child: Text(label, style: const TextStyle(color: Colors.white38)),
-        ),
-        Expanded(child: SelectableText(value, textAlign: TextAlign.right)),
-      ],
-    ),
-  );
+  Widget build(BuildContext context) {
+    final copyText = copyValue;
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 5),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          SizedBox(
+            width: 82,
+            child: Text(label, style: const TextStyle(color: Colors.white38)),
+          ),
+          Expanded(child: SelectableText(value, textAlign: TextAlign.right)),
+          if (copyText != null) ...[
+            const SizedBox(width: 4),
+            IconButton(
+              tooltip: 'Copy artist tags',
+              visualDensity: VisualDensity.compact,
+              constraints: const BoxConstraints.tightFor(
+                width: 28,
+                height: 28,
+              ),
+              padding: EdgeInsets.zero,
+              onPressed: copyText.isEmpty
+                  ? null
+                  : () {
+                      Clipboard.setData(ClipboardData(text: copyText));
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        const SnackBar(content: Text('Artist tags copied.')),
+                      );
+                    },
+              icon: const Icon(Icons.copy_rounded, size: 15),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
 }
 
 class _CopyBlock extends StatelessWidget {

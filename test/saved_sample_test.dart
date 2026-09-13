@@ -58,4 +58,33 @@ void main() {
     );
     expect(custom.vaultGroupKey, isNot(artist.vaultGroupKey));
   });
+
+  test('formats a single artist tag for clipboard copying', () {
+    final weighted = SavedSample(
+      file: File('weighted.png'),
+      artist: 'mikozin',
+      modelId: 'model',
+      createdAt: DateTime(2026),
+      metadata: const {'artistWeight': .4},
+    );
+    expect(weighted.artistTags, '0.40:: artist:mikozin ::');
+    expect(sampleWithPrompt('artist:a').artistTags, 'artist:sample');
+  });
+
+  test('formats Custom artist tags in the saved generation order', () {
+    final custom = SavedSample(
+      file: File('mix.png'),
+      artist: 'Artist Mixes',
+      modelId: 'model',
+      createdAt: DateTime(2026),
+      metadata: const {
+        'isCustom': true,
+        'customArtists': [
+          {'name': 'mikozin', 'weight': .4, 'fixed': false},
+          {'name': 'lack', 'weight': 1.0, 'fixed': true},
+        ],
+      },
+    );
+    expect(custom.artistTags, '0.40:: artist:mikozin ::, artist:lack');
+  });
 }

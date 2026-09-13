@@ -51,6 +51,10 @@ void main() {
       expect(sidecar['randomizeCustomOrder'], isTrue);
       expect(sidecar['randomizeCustomWeights'], isTrue);
       expect(sidecar['customArtists'], hasLength(2));
+      expect(sidecar['artistTags'], [
+        'artist:first',
+        '1.25:: artist:second ::',
+      ]);
       expect((sidecar['customArtists'] as List).last['fixed'], isTrue);
       expect(sidecar['composedPrompt'], contains('artist:second'));
     },
