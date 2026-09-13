@@ -66,19 +66,20 @@ This workflow only builds the application. It does not create a GitHub Release,
 sign or notarize the macOS app, sign the Windows executable, or publish an
 automatic update.
 
-## Automatic macOS releases
+## Automatic desktop releases
 
-The `macOS Release` workflow validates, tests, builds, and publishes an unsigned
-macOS ZIP as a GitHub Release. A release can be started in either of these ways:
+The `Desktop Release` workflow validates, tests, builds, and publishes unsigned
+macOS and Windows x64 ZIPs in one GitHub Release. A release can be started in
+either of these ways:
 
 - Push a version tag such as `v0.1.0-beta.2`.
-- Open **Actions → macOS Release → Run workflow** and enter the release tag.
+- Open **Actions → Desktop Release → Run workflow** and enter the release tag.
 
 The tag's `major.minor.patch` portion must match `version` in `pubspec.yaml`.
 A suffix such as `-beta.2` publishes a prerelease; a tag without a suffix
 publishes a normal release. Manual workflow runs create the tag only after
-analysis, tests, and the macOS build succeed. Release assets remain unsigned and
-unnotarized.
+analysis, tests, and both desktop builds succeed. Release assets remain unsigned;
+the macOS build is also unnotarized.
 
 ### macOS signing and Keychain
 
