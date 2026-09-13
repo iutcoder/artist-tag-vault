@@ -1285,45 +1285,55 @@ class _CustomArtistDialog extends StatefulWidget {
   State<_CustomArtistDialog> createState() => _CustomArtistDialogState();
 }
 
+enum _CustomArtistInputMode { single, multi }
+
 class _CustomArtistDialogState extends State<_CustomArtistDialog> {
-  late final TextEditingController _controller;
-  final _focusNode = FocusNode();
+  late final TextEditingController _singleController;
+  final _multiController = TextEditingController();
+  final _singleFocusNode = FocusNode();
+  final _multiFocusNode = FocusNode();
   late double _weight;
+  _CustomArtistInputMode _inputMode = _CustomArtistInputMode.single;
   String? _error;
 
   @override
   void initState() {
     super.initState();
-    _controller = TextEditingController(text: widget.initialValue?.name ?? '');
+    _singleController = TextEditingController(
+      text: widget.initialValue?.name ?? '',
+    );
     _weight = widget.initialValue?.weight ?? 1;
   }
 
   @override
   void dispose() {
-    _controller.dispose();
-    _focusNode.dispose();
+    _singleController.dispose();
+    _multiController.dispose();
+    _singleFocusNode.dispose();
+    _multiFocusNode.dispose();
     super.dispose();
   }
 
   void _submit() {
-    if (widget.initialValue != null) {
-      final name = _controller.text.trim();
-      if (name.isEmpty) return;
+    if (widget.initialValue != null ||
+        _inputMode == _CustomArtistInputMode.single) {
+      final name = _singleController.text.trim();
+      if (name.isEmpty) {
+        setState(() => _error = 'Enter an artist name.');
+        return;
+      }
       Navigator.of(context).pop([
         CustomArtist(
           name: name,
           weight: _weight,
-          fixed: widget.initialValue!.fixed,
+          fixed: widget.initialValue?.fixed ?? false,
         ),
       ]);
       return;
     }
 
     try {
-      final artists = CustomArtistParser.parseMany(
-        _controller.text,
-        defaultWeight: _weight,
-      );
+      final artists = CustomArtistParser.parseMany(_multiController.text);
       if (artists.isEmpty) {
         setState(() => _error = 'Enter at least one artist.');
         return;
@@ -1344,46 +1354,82 @@ class _CustomArtistDialogState extends State<_CustomArtistDialog> {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            if (widget.initialValue != null)
+            if (widget.initialValue == null) ...[
+              SegmentedButton<_CustomArtistInputMode>(
+                segments: const [
+                  ButtonSegment(
+                    value: _CustomArtistInputMode.single,
+                    label: Text('Single'),
+                    icon: Icon(Icons.person_outline_rounded),
+                  ),
+                  ButtonSegment(
+                    value: _CustomArtistInputMode.multi,
+                    label: Text('Multi'),
+                    icon: Icon(Icons.group_outlined),
+                  ),
+                ],
+                selected: {_inputMode},
+                onSelectionChanged: (selection) {
+                  setState(() {
+                    _inputMode = selection.single;
+                    _error = null;
+                  });
+                  final focusNode = _inputMode == _CustomArtistInputMode.single
+                      ? _singleFocusNode
+                      : _multiFocusNode;
+                  WidgetsBinding.instance.addPostFrameCallback(
+                    (_) => focusNode.requestFocus(),
+                  );
+                },
+              ),
+              const SizedBox(height: 14),
+            ],
+            if (widget.initialValue != null ||
+                _inputMode == _CustomArtistInputMode.single) ...[
               DanbooruArtistField(
-                controller: _controller,
-                focusNode: _focusNode,
+                controller: _singleController,
+                focusNode: _singleFocusNode,
                 service: widget.service,
                 enabled: true,
                 onSubmitted: (_) => _submit(),
-              )
-            else
+              ),
+              if (_error != null)
+                Padding(
+                  padding: const EdgeInsets.only(left: 12, top: 6),
+                  child: Text(
+                    _error!,
+                    style: TextStyle(
+                      color: Theme.of(context).colorScheme.error,
+                      fontSize: 12,
+                    ),
+                  ),
+                ),
+              const SizedBox(height: 14),
+              NumericStepperField(
+                value: _weight,
+                minimum: -5,
+                maximum: 5,
+                step: .01,
+                decimalPlaces: 2,
+                labelText: 'Weight',
+                onChanged: (value) => setState(() => _weight = value),
+              ),
+            ] else
               TextField(
-                controller: _controller,
-                focusNode: _focusNode,
+                controller: _multiController,
+                focusNode: _multiFocusNode,
                 autofocus: true,
                 minLines: 4,
                 maxLines: 8,
                 decoration: InputDecoration(
-                  labelText: 'Artists',
+                  labelText: 'Artists · comma or new line separated',
                   alignLabelWithHint: true,
-                  hintText:
-                      'ningen mame, wanke, lack\n'
-                      '1.25:: artist:oshioshio ::',
-                  helperText: 'Separate artists with commas or new lines.',
                   errorText: _error,
                 ),
                 onChanged: (_) {
                   if (_error != null) setState(() => _error = null);
                 },
               ),
-            const SizedBox(height: 14),
-            NumericStepperField(
-              value: _weight,
-              minimum: -5,
-              maximum: 5,
-              step: .01,
-              decimalPlaces: 2,
-              labelText: widget.initialValue == null
-                  ? 'Default weight'
-                  : 'Weight',
-              onChanged: (value) => setState(() => _weight = value),
-            ),
           ],
         ),
       ),
