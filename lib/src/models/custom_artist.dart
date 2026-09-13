@@ -131,7 +131,7 @@ class CustomArtistParser {
     double weight,
   ) {
     for (final rawName in source.split(RegExp(r'[,\r\n]+'))) {
-      final name = rawName.replaceFirst(_artistPrefix, '').trim();
+      final name = rawName.trim().replaceFirst(_artistPrefix, '').trim();
       if (name.isNotEmpty) {
         result.add(CustomArtist(name: name, weight: weight));
       }
