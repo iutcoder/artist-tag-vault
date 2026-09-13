@@ -1,22 +1,26 @@
-name: macOS Beta Release
+name: macOS Release
 
 on:
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: 'Release tag, for example v0.1.0-beta.2'
+        required: true
+        type: string
   push:
     tags:
       - 'v*'
-    branches:
-      - 'release/v*'
 
 permissions:
   contents: write
 
 concurrency:
-  group: macos-release-${{ github.ref }}
+  group: macos-release-${{ inputs.release_tag || github.ref }}
   cancel-in-progress: false
 
 jobs:
   release:
-    name: Build and publish macOS beta
+    name: Validate, build, and publish macOS release
     runs-on: macos-latest
     timeout-minutes: 30
     steps:
@@ -26,15 +30,32 @@ jobs:
       - name: Resolve release tag
         id: release
         shell: bash
+        env:
+          REQUESTED_TAG: ${{ inputs.release_tag }}
         run: |
-          if [[ "$GITHUB_REF_TYPE" == "tag" ]]; then
-            tag="$GITHUB_REF_NAME"
+          if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]]; then
+            tag="$REQUESTED_TAG"
           else
-            tag="${GITHUB_REF_NAME#release/}"
+            tag="$GITHUB_REF_NAME"
           fi
-          if [[ "$tag" != v* ]]; then
-            echo "Release tag must start with v: $tag" >&2
+          if [[ ! "$tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "Invalid release tag: $tag" >&2
             exit 1
+          fi
+
+          app_version="$(awk '/^version:/ { print $2; exit }' pubspec.yaml)"
+          app_version="${app_version%%+*}"
+          tag_version="${tag#v}"
+          tag_version="${tag_version%%-*}"
+          if [[ "$tag_version" != "$app_version" ]]; then
+            echo "Tag $tag does not match pubspec version $app_version." >&2
+            exit 1
+          fi
+
+          if [[ "$tag" == *-* ]]; then
+            echo "prerelease=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "prerelease=false" >> "$GITHUB_OUTPUT"
           fi
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
 
@@ -53,6 +74,12 @@ jobs:
       - name: Resolve dependencies
         run: flutter pub get
 
+      - name: Analyze Dart code
+        run: flutter analyze
+
+      - name: Run tests
+        run: flutter test
+
       - name: Build macOS app
         run: flutter build macos --release
 
@@ -62,14 +89,19 @@ jobs:
           build/macos/Build/Products/Release/artist_tag_vault.app
           Artist-Tag-Vault-macOS-unsigned.zip
 
-      - name: Publish prerelease
+      - name: Publish GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ steps.release.outputs.tag }}
+          IS_PRERELEASE: ${{ steps.release.outputs.prerelease }}
         run: |
+          release_flags=()
+          if [[ "$IS_PRERELEASE" == "true" ]]; then
+            release_flags+=(--prerelease)
+          fi
           gh release create "$RELEASE_TAG" \
             Artist-Tag-Vault-macOS-unsigned.zip \
             --target "$GITHUB_SHA" \
             --title "Artist Tag Vault $RELEASE_TAG" \
-            --prerelease \
-            --notes "macOS beta build. This build is unsigned and not notarized, so macOS Gatekeeper may require manual approval before first launch."
+            "${release_flags[@]}" \
+            --notes "Unsigned macOS build. This app is not notarized, so macOS Gatekeeper may require manual approval before first launch."

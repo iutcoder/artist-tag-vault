@@ -7,6 +7,7 @@ on:
       - main
     paths:
       - '.github/workflows/desktop-build.yml'
+      - '.github/workflows/macos-beta-release.yml'
       - 'analysis_options.yaml'
       - 'lib/**'
       - 'macos/**'
