@@ -29,6 +29,7 @@ class _VaultPageState extends State<VaultPage> {
   final _search = TextEditingController();
   final _transform = TransformationController();
   final _pageScroll = ScrollController();
+  final _thumbnailScroll = ScrollController();
   final _keyboardFocus = FocusNode(debugLabel: 'Vault keyboard navigation');
   List<SavedSample> _samples = const [];
   bool _loading = true;
@@ -68,6 +69,7 @@ class _VaultPageState extends State<VaultPage> {
     _search.dispose();
     _transform.dispose();
     _pageScroll.dispose();
+    _thumbnailScroll.dispose();
     _keyboardFocus.dispose();
     _wheelResetTimer?.cancel();
     _navigationCueTimer?.cancel();
@@ -93,6 +95,7 @@ class _VaultPageState extends State<VaultPage> {
         _selected = _artistSamples.isEmpty ? null : _artistSamples.first;
       });
       unawaited(_readSelectedImageSize());
+      _revealSelectedThumbnail(jump: true);
     } on Exception catch (error) {
       if (mounted) setState(() => _error = error.toString());
     } finally {
@@ -164,6 +167,7 @@ class _VaultPageState extends State<VaultPage> {
       _selected = _artistSamples.isEmpty ? null : _artistSamples.first;
     });
     unawaited(_readSelectedImageSize());
+    _revealSelectedThumbnail(jump: true);
   }
 
   void _selectArtist(String artist) {
@@ -176,6 +180,7 @@ class _VaultPageState extends State<VaultPage> {
       _selected = _artistSamples.isEmpty ? null : _artistSamples.first;
     });
     unawaited(_readSelectedImageSize());
+    _revealSelectedThumbnail(jump: true);
   }
 
   void _selectSubject(_SubjectFilter? subject) {
@@ -189,6 +194,7 @@ class _VaultPageState extends State<VaultPage> {
       _selected = _artistSamples.isEmpty ? null : _artistSamples.first;
     });
     unawaited(_readSelectedImageSize());
+    _revealSelectedThumbnail(jump: true);
   }
 
   void _selectSample(SavedSample sample) {
@@ -197,6 +203,58 @@ class _VaultPageState extends State<VaultPage> {
       _selected = sample;
     });
     unawaited(_readSelectedImageSize());
+    _revealSelectedThumbnail();
+  }
+
+  void _revealSelectedThumbnail({bool jump = false}) {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !_thumbnailScroll.hasClients || _selected == null) {
+        return;
+      }
+      final index = _artistSamples.indexOf(_selected!);
+      if (index < 0) return;
+
+      const itemExtent = 72.0;
+      final position = _thumbnailScroll.position;
+      final itemStart = index * itemExtent;
+      final itemEnd = itemStart + 64;
+      final visibleStart = position.pixels;
+      final visibleEnd = visibleStart + position.viewportDimension;
+      double? target;
+      if (itemStart < visibleStart) {
+        target = itemStart;
+      } else if (itemEnd > visibleEnd) {
+        target = itemEnd - position.viewportDimension;
+      }
+      if (target == null) return;
+      final offset = target.clamp(
+        position.minScrollExtent,
+        position.maxScrollExtent,
+      ).toDouble();
+      if (jump) {
+        _thumbnailScroll.jumpTo(offset);
+      } else {
+        _thumbnailScroll.animateTo(
+          offset,
+          duration: const Duration(milliseconds: 180),
+          curve: Curves.easeOutCubic,
+        );
+      }
+    });
+  }
+
+  void _scrollThumbnails(PointerSignalEvent event) {
+    if (event is! PointerScrollEvent || !_thumbnailScroll.hasClients) return;
+    final delta = event.scrollDelta;
+    final amount = delta.dx.abs() > delta.dy.abs() ? delta.dx : delta.dy;
+    if (amount == 0) return;
+    final position = _thumbnailScroll.position;
+    _thumbnailScroll.jumpTo(
+      (position.pixels + amount).clamp(
+        position.minScrollExtent,
+        position.maxScrollExtent,
+      ).toDouble(),
+    );
   }
 
   void _toggleSelectionMode() {
@@ -257,6 +315,7 @@ class _VaultPageState extends State<VaultPage> {
     });
     _keyboardFocus.requestFocus();
     unawaited(_readSelectedImageSize());
+    _revealSelectedThumbnail();
   }
 
   KeyEventResult _handleKeyEvent(FocusNode _, KeyEvent event) {
@@ -465,6 +524,7 @@ class _VaultPageState extends State<VaultPage> {
       _artist = nextArtist;
       _selected = nextSample;
     });
+    _revealSelectedThumbnail();
   }
 
   String _adjacentValue({
@@ -1038,58 +1098,84 @@ class _VaultPageState extends State<VaultPage> {
           if (_artistSamples.length > 1) ...[
             const SizedBox(height: 6),
             SizedBox(
-              height: 74,
-              child: ListView.separated(
-                scrollDirection: Axis.horizontal,
-                itemCount: _artistSamples.length,
-                separatorBuilder: (_, __) => const SizedBox(width: 8),
-                itemBuilder: (context, index) {
-                  final item = _artistSamples[index];
-                  final selected = _selectedPaths.contains(item.file.path);
-                  return InkWell(
-                    onTap: () => _handleThumbnailTap(item, index),
-                    child: SizedBox(
-                      width: 64,
-                      child: Stack(
-                        fit: StackFit.expand,
-                        children: [
-                          Container(
-                            decoration: BoxDecoration(
-                              borderRadius: BorderRadius.circular(9),
-                              border: Border.all(
-                                color: selected || item == sample
-                                    ? Theme.of(context).colorScheme.primary
-                                    : Colors.white12,
-                                width: selected || item == sample ? 2 : 1,
-                              ),
-                            ),
-                            clipBehavior: Clip.antiAlias,
-                            child: Image.file(item.file, fit: BoxFit.cover),
-                          ),
-                          if (selected)
-                            Positioned(
-                              top: 5,
-                              right: 5,
-                              child: DecoratedBox(
-                                decoration: BoxDecoration(
-                                  color: Theme.of(context).colorScheme.primary,
-                                  shape: BoxShape.circle,
-                                ),
-                                child: const Padding(
-                                  padding: EdgeInsets.all(3),
-                                  child: Icon(
-                                    Icons.check_rounded,
-                                    size: 14,
-                                    color: Colors.white,
+              height: 80,
+              child: Scrollbar(
+                controller: _thumbnailScroll,
+                thumbVisibility: true,
+                scrollbarOrientation: ScrollbarOrientation.bottom,
+                child: Padding(
+                  padding: const EdgeInsets.only(bottom: 8),
+                  child: Listener(
+                    onPointerSignal: _scrollThumbnails,
+                    child: ScrollConfiguration(
+                      behavior: const _ThumbnailScrollBehavior(),
+                      child: ListView.separated(
+                        controller: _thumbnailScroll,
+                        scrollDirection: Axis.horizontal,
+                        itemCount: _artistSamples.length,
+                        separatorBuilder: (_, __) => const SizedBox(width: 8),
+                        itemBuilder: (context, index) {
+                          final item = _artistSamples[index];
+                          final selected = _selectedPaths.contains(
+                            item.file.path,
+                          );
+                          return InkWell(
+                            onTap: () => _handleThumbnailTap(item, index),
+                            child: SizedBox(
+                              width: 64,
+                              child: Stack(
+                                fit: StackFit.expand,
+                                children: [
+                                  Container(
+                                    decoration: BoxDecoration(
+                                      borderRadius: BorderRadius.circular(9),
+                                      border: Border.all(
+                                        color: selected || item == sample
+                                            ? Theme.of(
+                                                context,
+                                              ).colorScheme.primary
+                                            : Colors.white12,
+                                        width: selected || item == sample
+                                            ? 2
+                                            : 1,
+                                      ),
+                                    ),
+                                    clipBehavior: Clip.antiAlias,
+                                    child: Image.file(
+                                      item.file,
+                                      fit: BoxFit.cover,
+                                    ),
                                   ),
-                                ),
+                                  if (selected)
+                                    Positioned(
+                                      top: 5,
+                                      right: 5,
+                                      child: DecoratedBox(
+                                        decoration: BoxDecoration(
+                                          color: Theme.of(
+                                            context,
+                                          ).colorScheme.primary,
+                                          shape: BoxShape.circle,
+                                        ),
+                                        child: const Padding(
+                                          padding: EdgeInsets.all(3),
+                                          child: Icon(
+                                            Icons.check_rounded,
+                                            size: 14,
+                                            color: Colors.white,
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                ],
                               ),
                             ),
-                        ],
+                          );
+                        },
                       ),
                     ),
-                  );
-                },
+                  ),
+                ),
               ),
             ),
           ],
@@ -1291,6 +1377,16 @@ class _VaultPageState extends State<VaultPage> {
     }).whereType<String>();
     return labels.isEmpty ? null : labels.join(', ');
   }
+}
+
+class _ThumbnailScrollBehavior extends MaterialScrollBehavior {
+  const _ThumbnailScrollBehavior();
+
+  @override
+  Set<PointerDeviceKind> get dragDevices => {
+    ...super.dragDevices,
+    PointerDeviceKind.mouse,
+  };
 }
 
 class _NavigationCue extends StatelessWidget {
