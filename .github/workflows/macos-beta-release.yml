@@ -1,10 +1,10 @@
-name: macOS Release
+name: Desktop Release
 
 on:
   workflow_dispatch:
     inputs:
       release_tag:
-        description: 'Release tag, for example v0.1.0-beta.2'
+        description: 'Release tag, for example v0.1.1-beta.1'
         required: true
         type: string
   push:
@@ -15,14 +15,17 @@ permissions:
   contents: write
 
 concurrency:
-  group: macos-release-${{ inputs.release_tag || github.ref }}
+  group: desktop-release-${{ inputs.release_tag || github.ref }}
   cancel-in-progress: false
 
 jobs:
-  release:
-    name: Validate, build, and publish macOS release
-    runs-on: macos-latest
-    timeout-minutes: 30
+  validate:
+    name: Validate release
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    outputs:
+      tag: ${{ steps.release.outputs.tag }}
+      prerelease: ${{ steps.release.outputs.prerelease }}
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
@@ -65,12 +68,6 @@ jobs:
           channel: stable
           cache: true
 
-      - name: Generate macOS runner
-        run: |
-          flutter config --no-enable-swift-package-manager
-          flutter create --no-pub --platforms=macos --org com.iutcoder .
-          git restore -- .
-
       - name: Resolve dependencies
         run: flutter pub get
 
@@ -79,6 +76,30 @@ jobs:
 
       - name: Run tests
         run: flutter test
+
+  macos:
+    name: Build macOS release
+    needs: validate
+    runs-on: macos-latest
+    timeout-minutes: 30
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2.23.0
+        with:
+          channel: stable
+          cache: true
+
+      - name: Generate macOS runner
+        run: |
+          flutter config --no-enable-swift-package-manager
+          flutter create --no-pub --platforms=macos --org com.iutcoder .
+          git restore -- .
+
+      - name: Resolve dependencies
+        run: flutter pub get
 
       - name: Build macOS app
         run: flutter build macos --release
@@ -89,19 +110,91 @@ jobs:
           build/macos/Build/Products/Release/artist_tag_vault.app
           Artist-Tag-Vault-macOS-unsigned.zip
 
+      - name: Upload macOS release asset
+        uses: actions/upload-artifact@v4
+        with:
+          name: macos-release-asset
+          path: Artist-Tag-Vault-macOS-unsigned.zip
+          if-no-files-found: error
+          retention-days: 1
+
+  windows:
+    name: Build Windows x64 release
+    needs: validate
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2.23.0
+        with:
+          channel: stable
+          cache: true
+
+      - name: Generate Windows runner
+        shell: pwsh
+        run: |
+          flutter create --no-pub --platforms=windows --org com.iutcoder .
+          git restore -- .
+
+      - name: Resolve dependencies
+        run: flutter pub get
+
+      - name: Build Windows app
+        run: flutter build windows --release
+
+      - name: Package Windows app
+        shell: pwsh
+        run: >-
+          Compress-Archive
+          -Path build\windows\x64\runner\Release\*
+          -DestinationPath Artist-Tag-Vault-Windows-x64.zip
+
+      - name: Upload Windows release asset
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-release-asset
+          path: Artist-Tag-Vault-Windows-x64.zip
+          if-no-files-found: error
+          retention-days: 1
+
+  publish:
+    name: Publish desktop release
+    needs:
+      - validate
+      - macos
+      - windows
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Download macOS release asset
+        uses: actions/download-artifact@v4
+        with:
+          name: macos-release-asset
+          path: release-assets
+
+      - name: Download Windows release asset
+        uses: actions/download-artifact@v4
+        with:
+          name: windows-release-asset
+          path: release-assets
+
       - name: Publish GitHub release
         env:
           GH_TOKEN: ${{ github.token }}
-          RELEASE_TAG: ${{ steps.release.outputs.tag }}
-          IS_PRERELEASE: ${{ steps.release.outputs.prerelease }}
+          RELEASE_TAG: ${{ needs.validate.outputs.tag }}
+          IS_PRERELEASE: ${{ needs.validate.outputs.prerelease }}
         run: |
           release_flags=()
           if [[ "$IS_PRERELEASE" == "true" ]]; then
             release_flags+=(--prerelease)
           fi
           gh release create "$RELEASE_TAG" \
-            Artist-Tag-Vault-macOS-unsigned.zip \
+            release-assets/Artist-Tag-Vault-macOS-unsigned.zip \
+            release-assets/Artist-Tag-Vault-Windows-x64.zip \
             --target "$GITHUB_SHA" \
             --title "Artist Tag Vault $RELEASE_TAG" \
             "${release_flags[@]}" \
-            --notes "Unsigned macOS build. This app is not notarized, so macOS Gatekeeper may require manual approval before first launch."
+            --notes "Unsigned macOS and Windows x64 builds. macOS Gatekeeper may require manual approval before first launch, and Windows may display a Microsoft Defender SmartScreen warning."
