@@ -1,5 +1,7 @@
 import 'dart:math';
 
+import 'package:artist_tag_vault/src/models/artist_name.dart';
+
 /// One artist participating in a custom multi-artist prompt.
 class CustomArtist {
   const CustomArtist({
@@ -20,7 +22,7 @@ class CustomArtist {
 
   static CustomArtist? fromJson(Object? value) {
     if (value is! Map) return null;
-    final name = value['name']?.toString().trim() ?? '';
+    final name = normalizeArtistName(value['name']?.toString() ?? '');
     final weight = double.tryParse(value['weight']?.toString() ?? '');
     if (name.isEmpty || weight == null) return null;
     return CustomArtist(
@@ -82,11 +84,6 @@ class CustomArtistParser {
     caseSensitive: false,
     dotAll: true,
   );
-  static final _artistPrefix = RegExp(
-    r'^artist\s*:\s*',
-    caseSensitive: false,
-  );
-
   static List<CustomArtist> parseMany(
     String source, {
     double defaultWeight = 1,
@@ -131,7 +128,7 @@ class CustomArtistParser {
     double weight,
   ) {
     for (final rawName in source.split(RegExp(r'[,\r\n]+'))) {
-      final name = rawName.trim().replaceFirst(_artistPrefix, '').trim();
+      final name = normalizeArtistName(rawName);
       if (name.isNotEmpty) {
         result.add(CustomArtist(name: name, weight: weight));
       }

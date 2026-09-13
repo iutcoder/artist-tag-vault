@@ -1,5 +1,6 @@
 import 'dart:io';
 
+import 'package:artist_tag_vault/src/models/artist_name.dart';
 import 'package:artist_tag_vault/src/models/custom_artist.dart';
 import 'package:artist_tag_vault/src/services/prompt_composer.dart';
 
@@ -27,8 +28,10 @@ class SavedSample {
   String get undesiredContent =>
       (metadata['negative_prompt'] ?? metadata['uc'] ?? '').toString();
   bool get isCustom => metadata['isCustom'] == true;
-  String get vaultGroupKey => isCustom ? 'custom:' : 'artist:$artist';
-  String get vaultGroupLabel => isCustom ? 'Artist Mixes' : artist;
+  String get vaultGroupKey =>
+      isCustom ? 'custom:' : 'artist:${artistIdentityKey(artist)}';
+  String get vaultGroupLabel =>
+      isCustom ? 'Artist Mixes' : normalizeArtistName(artist);
 
   String get artistTags {
     if (isCustom) {

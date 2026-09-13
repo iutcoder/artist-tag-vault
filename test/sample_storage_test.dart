@@ -10,6 +10,38 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as path;
 
 void main() {
+  test('normalizes Danbooru underscores when saving artist samples', () async {
+    final temporary = await Directory.systemTemp.createTemp(
+      'artist-tag-vault-normalized-save-',
+    );
+    addTearDown(() async {
+      if (await temporary.exists()) await temporary.delete(recursive: true);
+    });
+    final root = Directory(path.join(temporary.path, 'samples'));
+    final preset = GenerationPreset.defaults();
+    final storage = SampleStorage(rootDirectory: root);
+
+    final image = await storage.save(
+      bytes: Uint8List.fromList([1, 2, 3]),
+      artist: 'channel_(caststation)',
+      composedPrompt: 'artist:channel (caststation)',
+      composedUndesiredContent: '',
+      seed: 123,
+      artistWeight: 1,
+      preset: preset,
+    );
+
+    expect(
+      image.parent.path,
+      path.join(root.path, preset.model.apiId, 'channel (caststation)'),
+    );
+    final sidecar = jsonDecode(
+      await File(path.setExtension(image.path, '.json')).readAsString(),
+    ) as Map<String, dynamic>;
+    expect(sidecar['artist'], 'channel (caststation)');
+    expect(sidecar['artistTag'], 'artist:channel (caststation)');
+  });
+
   test(
     'saves Custom samples under the model custom folder with artists',
     () async {

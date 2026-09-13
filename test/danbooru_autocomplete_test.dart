@@ -81,6 +81,28 @@ void main() {
     expect((await service.status()).artistCount, 1);
   });
 
+  test('matches spaces and underscores and de-duplicates their identity', () async {
+    final temporary = await Directory.systemTemp.createTemp(
+      'artist-tag-vault-normalized-dictionary-',
+    );
+    addTearDown(() async => temporary.delete(recursive: true));
+    final dictionary = File(path.join(temporary.path, 'artists.json'));
+    await dictionary.writeAsString(
+      '{"updatedAt":"2026-09-12T00:00:00Z","artists":['
+      '{"value":"channel_(caststation)","count":100},'
+      '{"value":"channel (caststation)","count":90}]}',
+    );
+    final service = DanbooruAutocompleteService(
+      dictionaryFile: () async => dictionary,
+    );
+
+    final results = await service.suggestArtists('channel (cast');
+
+    expect((await service.status()).artistCount, 1);
+    expect(results.single.label, 'channel (caststation)');
+    expect(results.single.count, 100);
+  });
+
   test('failed update leaves an existing dictionary available', () async {
     final temporary = await Directory.systemTemp.createTemp(
       'artist-tag-vault-preserve-dictionary-',

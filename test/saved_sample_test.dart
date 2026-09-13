@@ -59,6 +59,27 @@ void main() {
     expect(custom.vaultGroupKey, isNot(artist.vaultGroupKey));
   });
 
+  test('groups Danbooru underscore and NovelAI space names together', () {
+    final danbooru = SavedSample(
+      file: File('underscore.png'),
+      artist: 'channel_(caststation)',
+      modelId: 'model',
+      createdAt: DateTime(2026),
+      metadata: const {},
+    );
+    final novelAi = SavedSample(
+      file: File('space.png'),
+      artist: 'channel (caststation)',
+      modelId: 'model',
+      createdAt: DateTime(2026),
+      metadata: const {},
+    );
+
+    expect(danbooru.vaultGroupKey, novelAi.vaultGroupKey);
+    expect(danbooru.vaultGroupLabel, 'channel (caststation)');
+    expect(danbooru.artistTags, 'artist:channel (caststation)');
+  });
+
   test('formats a single artist tag for clipboard copying', () {
     final weighted = SavedSample(
       file: File('weighted.png'),

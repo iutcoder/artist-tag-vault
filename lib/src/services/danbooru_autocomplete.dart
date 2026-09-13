@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:artist_tag_vault/src/models/artist_name.dart';
 import 'package:http/http.dart' as http;
 import 'package:path/path.dart' as path;
 import 'package:path_provider/path_provider.dart';
@@ -12,7 +13,7 @@ class DanbooruArtistSuggestion {
   final String value;
   final int count;
 
-  String get label => value.replaceAll('_', ' ');
+  String get label => normalizeArtistName(value);
 
   Map<String, Object> toJson() => {'value': value, 'count': count};
 
@@ -95,7 +96,7 @@ class DanbooruAutocompleteService {
     final prefix = <DanbooruArtistSuggestion>[];
     final contains = <DanbooruArtistSuggestion>[];
     for (final artist in _artists) {
-      final name = artist.value.toLowerCase();
+      final name = _searchKey(artist.value);
       if (name.startsWith(query)) {
         prefix.add(artist);
       } else if (name.contains(query)) {
@@ -125,7 +126,9 @@ class DanbooruAutocompleteService {
       final checkpoint = await _loadCheckpoint();
       if (checkpoint != null) {
         downloaded.addEntries(
-          checkpoint.artists.map((artist) => MapEntry(artist.value, artist)),
+          checkpoint.artists.map(
+            (artist) => MapEntry(artistIdentityKey(artist.value), artist),
+          ),
         );
         cursor = checkpoint.nextCursor;
         onProgress?.call(downloaded.length);
@@ -137,7 +140,7 @@ class DanbooruAutocompleteService {
         final page = await _downloadPage(cursor);
         _ensureActive(operation);
         for (final entry in page.artists) {
-          downloaded[entry.value] = entry;
+          downloaded[artistIdentityKey(entry.value)] = entry;
         }
         onProgress?.call(downloaded.length);
         final lastId = page.lastId;
@@ -242,7 +245,11 @@ class DanbooruAutocompleteService {
             ?.toString()
             .trim();
         if (name == null || name.isEmpty) continue;
-        imported[name] = DanbooruArtistSuggestion(value: name, count: count);
+        final key = artistIdentityKey(name);
+        final existing = imported[key];
+        if (existing == null || count > existing.count) {
+          imported[key] = DanbooruArtistSuggestion(value: name, count: count);
+        }
       }
       if (imported.isEmpty) {
         throw const DanbooruAutocompleteException(
@@ -314,7 +321,7 @@ class DanbooruAutocompleteService {
               headers: const {
                 'Accept': 'application/json',
                 'Connection': 'close',
-                'User-Agent': 'ArtistTagVault/0.0.1',
+                'User-Agent': 'ArtistTagVault/0.1.0',
               },
             )
             .timeout(const Duration(seconds: 15));
@@ -396,11 +403,17 @@ class DanbooruAutocompleteService {
       if (decoded is! Map) return;
       final entries = decoded['artists'];
       if (entries is! List) return;
-      _artists = List.unmodifiable(
-        entries
-            .map(DanbooruArtistSuggestion.fromJson)
-            .whereType<DanbooruArtistSuggestion>(),
-      );
+      final artists = <String, DanbooruArtistSuggestion>{};
+      for (final artist in entries
+          .map(DanbooruArtistSuggestion.fromJson)
+          .whereType<DanbooruArtistSuggestion>()) {
+        final key = artistIdentityKey(artist.value);
+        final existing = artists[key];
+        if (existing == null || artist.count > existing.count) {
+          artists[key] = artist;
+        }
+      }
+      _artists = List.unmodifiable(artists.values);
       _updatedAt = DateTime.tryParse(decoded['updatedAt']?.toString() ?? '');
     } on Exception {
       _artists = const [];
@@ -507,8 +520,10 @@ class DanbooruAutocompleteService {
     );
   }
 
-  String _normalize(String value) =>
-      value.trim().toLowerCase().replaceAll(' ', '_');
+  String _normalize(String value) => _searchKey(value);
+
+  static String _searchKey(String value) =>
+      artistIdentityKey(value).replaceAll(' ', '_');
 
   void close() {
     if (_ownsClient) _client.close();

@@ -8,14 +8,14 @@ void main() {
         artist: 'sample_artist',
         presetPrompt: '1girl, solo',
       ),
-      'artist:sample_artist, 1girl, solo',
+      'artist:sample artist, 1girl, solo',
     );
   });
 
   test('does not duplicate a prefix supplied by the user', () {
     expect(
       PromptComposer.compose(artist: 'artist:sample_artist', presetPrompt: ''),
-      'artist:sample_artist',
+      'artist:sample artist',
     );
   });
 
@@ -26,7 +26,7 @@ void main() {
         presetPrompt: '1girl, solo',
         artistWeight: 1.5,
       ),
-      '1.50:: artist:sample_artist ::, 1girl, solo',
+      '1.50:: artist:sample artist ::, 1girl, solo',
     );
   });
 
@@ -48,7 +48,24 @@ void main() {
         presetPrompt: '',
         artistWeight: -0.25,
       ),
-      '-0.25:: artist:sample_artist ::',
+      '-0.25:: artist:sample artist ::',
+    );
+  });
+
+  test('treats Danbooru underscores as NovelAI spaces', () {
+    expect(
+      PromptComposer.compose(
+        artist: 'channel_(caststation)',
+        presetPrompt: '',
+      ),
+      'artist:channel (caststation)',
+    );
+    expect(
+      PromptComposer.compose(
+        artist: 'channel (caststation)',
+        presetPrompt: '',
+      ),
+      'artist:channel (caststation)',
     );
   });
 

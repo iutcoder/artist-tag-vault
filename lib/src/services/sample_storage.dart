@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
+import 'package:artist_tag_vault/src/models/artist_name.dart';
 import 'package:artist_tag_vault/src/models/custom_artist.dart';
 import 'package:artist_tag_vault/src/models/generation_preset.dart';
 import 'package:artist_tag_vault/src/models/saved_sample.dart';
@@ -41,8 +42,16 @@ class SampleStorage {
   }) async {
     final root = await rootDirectory();
     final isCustom = customArtists != null;
-    final storedArtist = isCustom ? 'Artist Mixes' : artist.trim();
-    final artistFolder = isCustom ? '_artist-mixes' : _safeSegment(artist);
+    final normalizedArtist = normalizeArtistName(artist);
+    final normalizedCustomArtists = customArtists
+        ?.map(
+          (entry) => entry.copyWith(name: normalizeArtistName(entry.name)),
+        )
+        .toList(growable: false);
+    final storedArtist = isCustom ? 'Artist Mixes' : normalizedArtist;
+    final artistFolder = isCustom
+        ? '_artist-mixes'
+        : _safeSegment(normalizedArtist);
     final directory = Directory(
       path.join(root.path, preset.model.apiId, artistFolder),
     );
@@ -63,9 +72,12 @@ class SampleStorage {
         'artist': storedArtist,
         'isCustom': isCustom,
         if (!isCustom)
-          'artistTag': PromptComposer.formatArtistTag(artist, artistWeight),
+          'artistTag': PromptComposer.formatArtistTag(
+            normalizedArtist,
+            artistWeight,
+          ),
         if (isCustom)
-          'artistTags': customArtists
+          'artistTags': normalizedCustomArtists!
               .map(
                 (artist) => PromptComposer.formatArtistTag(
                   artist.name,
@@ -74,7 +86,7 @@ class SampleStorage {
               )
               .toList(),
         if (isCustom)
-          'customArtists': customArtists
+          'customArtists': normalizedCustomArtists!
               .map((artist) => artist.toJson())
               .toList(),
         if (isCustom) 'randomizeCustomOrder': randomizeCustomOrder,

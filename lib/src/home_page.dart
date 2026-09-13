@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:io';
 import 'dart:math';
 
+import 'package:artist_tag_vault/src/models/artist_name.dart';
 import 'package:artist_tag_vault/src/models/account_usage.dart';
 import 'package:artist_tag_vault/src/models/app_settings.dart';
 import 'package:artist_tag_vault/src/models/custom_artist.dart';
@@ -133,7 +134,7 @@ class _HomePageState extends State<HomePage> {
     }
 
     final custom = _workspace == _Workspace.custom;
-    final artist = _artistController.text.trim();
+    final artist = normalizeArtistName(_artistController.text);
     if (!custom && artist.isEmpty) {
       _showError('아티스트 이름을 입력해 주세요.');
       return;
@@ -1317,7 +1318,7 @@ class _CustomArtistDialogState extends State<_CustomArtistDialog> {
   void _submit() {
     if (widget.initialValue != null ||
         _inputMode == _CustomArtistInputMode.single) {
-      final name = _singleController.text.trim();
+      final name = normalizeArtistName(_singleController.text);
       if (name.isEmpty) {
         setState(() => _error = 'Enter an artist name.');
         return;

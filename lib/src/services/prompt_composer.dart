@@ -1,3 +1,5 @@
+import 'package:artist_tag_vault/src/models/artist_name.dart';
+
 /// Builds the deterministic prompt used to compare artists.
 class PromptComposer {
   const PromptComposer._();
@@ -29,11 +31,7 @@ class PromptComposer {
   }
 
   static String formatArtistTag(String artist, double weight) {
-    final trimmed = artist.trim();
-    final withoutPrefix = trimmed.toLowerCase().startsWith('artist:')
-        ? trimmed.substring('artist:'.length).trim()
-        : trimmed;
-    final plainArtistTag = 'artist:$withoutPrefix';
+    final plainArtistTag = 'artist:${normalizeArtistName(artist)}';
     return (weight - 1).abs() < 0.000001
         ? plainArtistTag
         : '${weight.toStringAsFixed(2)}:: $plainArtistTag ::';

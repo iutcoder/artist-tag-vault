@@ -24,7 +24,7 @@ class DanbooruArtistField extends StatelessWidget {
           RawAutocomplete<DanbooruArtistSuggestion>(
         textEditingController: controller,
         focusNode: focusNode,
-        displayStringForOption: (option) => option.value,
+        displayStringForOption: (option) => option.label,
         optionsBuilder: (value) async {
           final query = value.text.trim();
           if (!enabled || query.length < 2) return const [];
