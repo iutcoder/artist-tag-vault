@@ -217,20 +217,14 @@ class _VaultPageState extends State<VaultPage> {
       const itemExtent = 72.0;
       final position = _thumbnailScroll.position;
       final itemStart = index * itemExtent;
-      final itemEnd = itemStart + 64;
-      final visibleStart = position.pixels;
-      final visibleEnd = visibleStart + position.viewportDimension;
-      double? target;
-      if (itemStart < visibleStart) {
-        target = itemStart;
-      } else if (itemEnd > visibleEnd) {
-        target = itemEnd - position.viewportDimension;
-      }
-      if (target == null) return;
+      const thumbnailWidth = 64.0;
+      final itemCenter = itemStart + thumbnailWidth / 2;
+      final target = itemCenter - position.viewportDimension / 2;
       final offset = target.clamp(
         position.minScrollExtent,
         position.maxScrollExtent,
       ).toDouble();
+      if ((offset - position.pixels).abs() < 0.5) return;
       if (jump) {
         _thumbnailScroll.jumpTo(offset);
       } else {
