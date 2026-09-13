@@ -246,8 +246,10 @@ class _VaultPageState extends State<VaultPage> {
   void _scrollThumbnails(PointerSignalEvent event) {
     if (event is! PointerScrollEvent || !_thumbnailScroll.hasClients) return;
     final delta = event.scrollDelta;
-    final amount = delta.dx.abs() > delta.dy.abs() ? delta.dx : delta.dy;
-    if (amount == 0) return;
+    // Horizontal trackpad/Magic Mouse input is handled by the ListView itself.
+    // Map a conventional vertical mouse wheel to the horizontal thumbnail strip.
+    if (delta.dy == 0 || delta.dx.abs() > delta.dy.abs()) return;
+    final amount = delta.dy;
     final position = _thumbnailScroll.position;
     _thumbnailScroll.jumpTo(
       (position.pixels + amount).clamp(
