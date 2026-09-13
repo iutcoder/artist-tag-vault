@@ -832,7 +832,7 @@ class _HomePageState extends State<HomePage> {
   }
 
   Future<void> _editCustomArtist({int? index}) async {
-    final result = await showDialog<CustomArtist>(
+    final result = await showDialog<List<CustomArtist>>(
       context: context,
       builder: (context) => _CustomArtistDialog(
         initialValue: index == null ? null : _customArtists[index],
@@ -842,9 +842,9 @@ class _HomePageState extends State<HomePage> {
     if (result == null || !mounted) return;
     setState(() {
       if (index == null) {
-        _customArtists.add(result);
+        _customArtists.addAll(result);
       } else {
-        _customArtists[index] = result;
+        _customArtists[index] = result.single;
       }
     });
   }
@@ -1289,6 +1289,7 @@ class _CustomArtistDialogState extends State<_CustomArtistDialog> {
   late final TextEditingController _controller;
   final _focusNode = FocusNode();
   late double _weight;
+  String? _error;
 
   @override
   void initState() {
@@ -1305,15 +1306,32 @@ class _CustomArtistDialogState extends State<_CustomArtistDialog> {
   }
 
   void _submit() {
-    final name = _controller.text.trim();
-    if (name.isEmpty) return;
-    Navigator.of(context).pop(
-      CustomArtist(
-        name: name,
-        weight: _weight,
-        fixed: widget.initialValue?.fixed ?? false,
-      ),
-    );
+    if (widget.initialValue != null) {
+      final name = _controller.text.trim();
+      if (name.isEmpty) return;
+      Navigator.of(context).pop([
+        CustomArtist(
+          name: name,
+          weight: _weight,
+          fixed: widget.initialValue!.fixed,
+        ),
+      ]);
+      return;
+    }
+
+    try {
+      final artists = CustomArtistParser.parseMany(
+        _controller.text,
+        defaultWeight: _weight,
+      );
+      if (artists.isEmpty) {
+        setState(() => _error = 'Enter at least one artist.');
+        return;
+      }
+      Navigator.of(context).pop(artists);
+    } on FormatException catch (error) {
+      setState(() => _error = error.message.toString());
+    }
   }
 
   @override
@@ -1326,13 +1344,34 @@ class _CustomArtistDialogState extends State<_CustomArtistDialog> {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            DanbooruArtistField(
-              controller: _controller,
-              focusNode: _focusNode,
-              service: widget.service,
-              enabled: true,
-              onSubmitted: (_) => _submit(),
-            ),
+            if (widget.initialValue != null)
+              DanbooruArtistField(
+                controller: _controller,
+                focusNode: _focusNode,
+                service: widget.service,
+                enabled: true,
+                onSubmitted: (_) => _submit(),
+              )
+            else
+              TextField(
+                controller: _controller,
+                focusNode: _focusNode,
+                autofocus: true,
+                minLines: 4,
+                maxLines: 8,
+                decoration: InputDecoration(
+                  labelText: 'Artists',
+                  alignLabelWithHint: true,
+                  hintText:
+                      'ningen mame, wanke, lack\n'
+                      '1.25:: artist:oshioshio ::',
+                  helperText: 'Separate artists with commas or new lines.',
+                  errorText: _error,
+                ),
+                onChanged: (_) {
+                  if (_error != null) setState(() => _error = null);
+                },
+              ),
             const SizedBox(height: 14),
             NumericStepperField(
               value: _weight,
@@ -1340,7 +1379,9 @@ class _CustomArtistDialogState extends State<_CustomArtistDialog> {
               maximum: 5,
               step: .01,
               decimalPlaces: 2,
-              labelText: 'Weight',
+              labelText: widget.initialValue == null
+                  ? 'Default weight'
+                  : 'Weight',
               onChanged: (value) => setState(() => _weight = value),
             ),
           ],

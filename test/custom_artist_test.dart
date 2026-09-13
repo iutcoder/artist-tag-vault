@@ -12,6 +12,43 @@ void main() {
     expect(CustomArtist.fromJson({'name': ''}), isNull);
   });
 
+  test('parses comma and newline separated artists in order', () {
+    final artists = CustomArtistParser.parseMany(
+      'ningen mame, wanke\nlack, artist:oshioshio',
+      defaultWeight: .75,
+    );
+    expect(
+      artists.map((artist) => artist.name),
+      ['ningen mame', 'wanke', 'lack', 'oshioshio'],
+    );
+    expect(artists.every((artist) => artist.weight == .75), isTrue);
+  });
+
+  test('weighted artist tags override the default weight', () {
+    final artists = CustomArtistParser.parseMany(
+      '1.25:: artist:ningen_mame ::, '
+      '-0.50:: artist:wanke ::, lack',
+      defaultWeight: 1,
+    );
+    expect(artists.map((artist) => artist.name), [
+      'ningen_mame',
+      'wanke',
+      'lack',
+    ]);
+    expect(artists.map((artist) => artist.weight), [1.25, -.5, 1]);
+  });
+
+  test('rejects malformed and out-of-range weighted tags', () {
+    expect(
+      () => CustomArtistParser.parseMany('1.25:: artist:name'),
+      throwsFormatException,
+    );
+    expect(
+      () => CustomArtistParser.parseMany('6.00:: artist:name ::'),
+      throwsFormatException,
+    );
+  });
+
   test('fixed artists keep their position and weight', () {
     const artists = [
       CustomArtist(name: 'a', weight: .7),

@@ -72,3 +72,57 @@ class CustomArtistRandomizer {
     return result;
   }
 }
+
+/// Parses ordered artist lists pasted into the Custom add dialog.
+class CustomArtistParser {
+  const CustomArtistParser._();
+
+  static final _weightedTag = RegExp(
+    r'^([+-]?(?:\d+(?:\.\d*)?|\.\d+))\s*::\s*'
+    r'(?:artist\s*:\s*)?(.+?)\s*::\s*$',
+    caseSensitive: false,
+  );
+  static final _artistPrefix = RegExp(
+    r'^artist\s*:\s*',
+    caseSensitive: false,
+  );
+
+  static List<CustomArtist> parseMany(
+    String source, {
+    double defaultWeight = 1,
+  }) {
+    _validateWeight(defaultWeight, label: 'Default weight');
+    final result = <CustomArtist>[];
+    final tokens = source.split(RegExp(r'[,\r\n]+'));
+    for (final rawToken in tokens) {
+      final token = rawToken.trim();
+      if (token.isEmpty) continue;
+
+      final weighted = _weightedTag.firstMatch(token);
+      if (weighted != null) {
+        final weight = double.parse(weighted.group(1)!);
+        _validateWeight(weight, label: 'Weight for ${weighted.group(2)}');
+        final name = weighted.group(2)!.trim();
+        if (name.isNotEmpty) {
+          result.add(CustomArtist(name: name, weight: weight));
+        }
+        continue;
+      }
+
+      if (token.contains('::')) {
+        throw FormatException('Invalid weighted artist tag: $token');
+      }
+      final name = token.replaceFirst(_artistPrefix, '').trim();
+      if (name.isNotEmpty) {
+        result.add(CustomArtist(name: name, weight: defaultWeight));
+      }
+    }
+    return result;
+  }
+
+  static void _validateWeight(double weight, {required String label}) {
+    if (!weight.isFinite || weight < -5 || weight > 5) {
+      throw FormatException('$label must be between -5.00 and 5.00.');
+    }
+  }
+}
