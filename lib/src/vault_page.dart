@@ -694,6 +694,8 @@ class _VaultPageState extends State<VaultPage> {
   Future<void> _readSelectedImageSize() async {
     final sample = _selected;
     if (sample == null) return;
+    setState(() => _imageSize = null);
+    _transform.value = Matrix4.identity();
     try {
       final codec = await ui.instantiateImageCodec(
         await sample.file.readAsBytes(),
@@ -704,14 +706,16 @@ class _VaultPageState extends State<VaultPage> {
         frame.image.dispose();
         return;
       }
-      _imageSize = Size(
+      final imageSize = Size(
         frame.image.width.toDouble(),
         frame.image.height.toDouble(),
       );
       frame.image.dispose();
+      setState(() => _imageSize = imageSize);
       WidgetsBinding.instance.addPostFrameCallback((_) => _fit());
     } on Exception {
-      _imageSize = null;
+      if (!mounted || sample != _selected) return;
+      setState(() => _imageSize = null);
       _transform.value = Matrix4.identity();
     }
   }
@@ -1033,6 +1037,8 @@ class _VaultPageState extends State<VaultPage> {
                               style: TextStyle(color: Colors.white38),
                             ),
                           )
+                        : _imageSize == null
+                        ? const Center(child: CircularProgressIndicator())
                         : Listener(
                             behavior: HitTestBehavior.opaque,
                             onPointerSignal: _handlePointerSignal,
@@ -1060,6 +1066,7 @@ class _VaultPageState extends State<VaultPage> {
                                       ),
                                       child: Image.file(
                                         sample.file,
+                                        key: const Key('vault-main-image'),
                                         fit: BoxFit.fill,
                                       ),
                                     ),
