@@ -43,9 +43,15 @@ void main() {
         ),
       ),
     );
-    await tester.pumpAndSettle();
-
     final mainImage = find.byKey(const Key('vault-main-image'));
+    // Vault contains animated progress and scroll indicators, so waiting for
+    // every animation to settle can block indefinitely. Pump only until the
+    // asynchronous file scan and initial image decode have completed.
+    for (var attempt = 0; attempt < 100; attempt++) {
+      await tester.pump(const Duration(milliseconds: 50));
+      if (mainImage.evaluate().isNotEmpty) break;
+    }
+
     expect(mainImage, findsOneWidget);
     expect(tester.getSize(mainImage).width, greaterThan(0));
     expect(tester.getSize(mainImage).height, greaterThan(0));
