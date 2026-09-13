@@ -38,6 +38,25 @@ void main() {
     expect(artists.map((artist) => artist.weight), [1.25, -.5, 1]);
   });
 
+  test('accepts a comma immediately before the closing weight marker', () {
+    final artists = CustomArtistParser.parseMany(
+      '0.5::artist:ratatatatat74,::, ningen mame',
+    );
+    expect(artists.map((artist) => artist.name), [
+      'ratatatatat74',
+      'ningen mame',
+    ]);
+    expect(artists.map((artist) => artist.weight), [.5, 1]);
+  });
+
+  test('applies one weight block to multiple artist tags', () {
+    final artists = CustomArtistParser.parseMany(
+      '0.75::artist:first, artist:second,::, third',
+    );
+    expect(artists.map((artist) => artist.name), ['first', 'second', 'third']);
+    expect(artists.map((artist) => artist.weight), [.75, .75, 1]);
+  });
+
   test('rejects malformed and out-of-range weighted tags', () {
     expect(
       () => CustomArtistParser.parseMany('1.25:: artist:name'),

@@ -77,10 +77,10 @@ class CustomArtistRandomizer {
 class CustomArtistParser {
   const CustomArtistParser._();
 
-  static final _weightedTag = RegExp(
-    r'^([+-]?(?:\d+(?:\.\d*)?|\.\d+))\s*::\s*'
-    r'(?:artist\s*:\s*)?(.+?)\s*::\s*$',
+  static final _weightedBlock = RegExp(
+    r'([+-]?(?:\d+(?:\.\d*)?|\.\d+))\s*::(.*?)::',
     caseSensitive: false,
+    dotAll: true,
   );
   static final _artistPrefix = RegExp(
     r'^artist\s*:\s*',
@@ -93,31 +93,49 @@ class CustomArtistParser {
   }) {
     _validateWeight(defaultWeight, label: 'Default weight');
     final result = <CustomArtist>[];
-    final tokens = source.split(RegExp(r'[,\r\n]+'));
-    for (final rawToken in tokens) {
-      final token = rawToken.trim();
-      if (token.isEmpty) continue;
-
-      final weighted = _weightedTag.firstMatch(token);
-      if (weighted != null) {
-        final weight = double.parse(weighted.group(1)!);
-        _validateWeight(weight, label: 'Weight for ${weighted.group(2)}');
-        final name = weighted.group(2)!.trim();
-        if (name.isNotEmpty) {
-          result.add(CustomArtist(name: name, weight: weight));
-        }
-        continue;
+    var cursor = 0;
+    for (final weighted in _weightedBlock.allMatches(source)) {
+      _appendPlainArtists(
+        result,
+        source.substring(cursor, weighted.start),
+        defaultWeight,
+      );
+      final weight = double.parse(weighted.group(1)!);
+      _validateWeight(weight, label: 'Artist weight');
+      final before = result.length;
+      _appendArtists(result, weighted.group(2)!, weight);
+      if (result.length == before) {
+        throw const FormatException('A weighted artist block is empty.');
       }
+      cursor = weighted.end;
+    }
+    _appendPlainArtists(result, source.substring(cursor), defaultWeight);
+    return result;
+  }
 
-      if (token.contains('::')) {
-        throw FormatException('Invalid weighted artist tag: $token');
-      }
-      final name = token.replaceFirst(_artistPrefix, '').trim();
+  static void _appendPlainArtists(
+    List<CustomArtist> result,
+    String source,
+    double weight,
+  ) {
+    if (source.contains('::')) {
+      final invalid = source.trim();
+      throw FormatException('Invalid weighted artist tag: $invalid');
+    }
+    _appendArtists(result, source, weight);
+  }
+
+  static void _appendArtists(
+    List<CustomArtist> result,
+    String source,
+    double weight,
+  ) {
+    for (final rawName in source.split(RegExp(r'[,\r\n]+'))) {
+      final name = rawName.replaceFirst(_artistPrefix, '').trim();
       if (name.isNotEmpty) {
-        result.add(CustomArtist(name: name, weight: defaultWeight));
+        result.add(CustomArtist(name: name, weight: weight));
       }
     }
-    return result;
   }
 
   static void _validateWeight(double weight, {required String label}) {
