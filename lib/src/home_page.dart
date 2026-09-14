@@ -48,9 +48,11 @@ class _HomePageState extends State<HomePage> {
 
   AppSettings _settings = AppSettings.defaults();
   File? _previewFile;
+  String _previewPrompt = '';
   String _status = 'Enter an artist name to create a standardized sample.';
   bool _busy = false;
   bool _previewExpanded = true;
+  bool _showPreviewPrompt = false;
   bool _advancedExpanded = false;
   bool _usageExpanded = false;
   _Workspace _workspace = _Workspace.generate;
@@ -222,6 +224,7 @@ class _HomePageState extends State<HomePage> {
         if (!mounted) return;
         setState(() {
           _previewFile = file;
+          _previewPrompt = prompt;
           _seed = generated.seed;
           _status = 'Saved ${index + 1} / $_generationCount · ${file.path}';
         });
@@ -373,9 +376,10 @@ class _HomePageState extends State<HomePage> {
                               )
                             : LayoutBuilder(
                                 builder: (context, constraints) {
+                                  final desktop =
+                                      Platform.isMacOS || Platform.isWindows;
                                   final compact =
-                                      constraints.maxWidth < 860 ||
-                                      constraints.maxHeight < 620;
+                                      !desktop && constraints.maxWidth < 860;
                                   return compact
                                       ? _buildCompactLayout(constraints)
                                       : _buildWideLayout();
@@ -1236,6 +1240,9 @@ class _HomePageState extends State<HomePage> {
                 _PreviewHeader(
                   compact: compact,
                   expanded: true,
+                  showPrompt: _showPreviewPrompt,
+                  onShowPromptChanged: (value) =>
+                      setState(() => _showPreviewPrompt = value),
                   onPressed: _togglePreview,
                 ),
                 const SizedBox(height: 8),
@@ -1244,20 +1251,23 @@ class _HomePageState extends State<HomePage> {
                     borderRadius: BorderRadius.circular(16),
                     child: _previewFile == null
                         ? const _EmptyPreview()
-                        : Image.file(
-                            _previewFile!,
-                            fit: BoxFit.contain,
-                            gaplessPlayback: true,
+                        : _PreviewImage(
+                            file: _previewFile!,
+                            prompt: _previewPrompt,
+                            showPrompt: _showPreviewPrompt,
                           ),
                   ),
                 ),
               ],
             )
           : _PreviewHeader(
-              compact: compact,
-              expanded: false,
-              onPressed: _togglePreview,
-            ),
+            compact: compact,
+            expanded: false,
+            showPrompt: _showPreviewPrompt,
+            onShowPromptChanged: (value) =>
+                setState(() => _showPreviewPrompt = value),
+            onPressed: _togglePreview,
+          ),
     );
   }
 
@@ -1729,11 +1739,15 @@ class _PreviewHeader extends StatelessWidget {
   const _PreviewHeader({
     required this.compact,
     required this.expanded,
+    required this.showPrompt,
+    required this.onShowPromptChanged,
     required this.onPressed,
   });
 
   final bool compact;
   final bool expanded;
+  final bool showPrompt;
+  final ValueChanged<bool> onShowPromptChanged;
   final VoidCallback onPressed;
 
   @override
@@ -1774,6 +1788,12 @@ class _PreviewHeader extends StatelessWidget {
               fontWeight: FontWeight.w700,
             ),
           ),
+          const Spacer(),
+          _PromptVisibilityToggle(
+            value: showPrompt,
+            onChanged: onShowPromptChanged,
+          ),
+          const SizedBox(width: 6),
         ],
       );
     }
@@ -1793,7 +1813,94 @@ class _PreviewHeader extends StatelessWidget {
           ),
         ),
         const Spacer(),
+        _PromptVisibilityToggle(
+          value: showPrompt,
+          onChanged: onShowPromptChanged,
+        ),
+        const SizedBox(width: 6),
         button,
+      ],
+    );
+  }
+}
+
+class _PromptVisibilityToggle extends StatelessWidget {
+  const _PromptVisibilityToggle({
+    required this.value,
+    required this.onChanged,
+  });
+
+  final bool value;
+  final ValueChanged<bool> onChanged;
+
+  @override
+  Widget build(BuildContext context) {
+    return Semantics(
+      label: 'Show generated prompt',
+      child: InkWell(
+        borderRadius: BorderRadius.circular(8),
+        onTap: () => onChanged(!value),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 4),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Checkbox(
+                value: value,
+                onChanged: (checked) => onChanged(checked ?? false),
+                visualDensity: VisualDensity.compact,
+              ),
+              const Text(
+                'Prompt',
+                style: TextStyle(color: Colors.white60, fontSize: 11),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _PreviewImage extends StatelessWidget {
+  const _PreviewImage({
+    required this.file,
+    required this.prompt,
+    required this.showPrompt,
+  });
+
+  final File file;
+  final String prompt;
+  final bool showPrompt;
+
+  @override
+  Widget build(BuildContext context) {
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        Image.file(file, fit: BoxFit.contain, gaplessPlayback: true),
+        if (showPrompt && prompt.trim().isNotEmpty)
+          Align(
+            alignment: Alignment.bottomCenter,
+            child: FractionallySizedBox(
+              widthFactor: 1,
+              heightFactor: 1 / 3,
+              child: ColoredBox(
+                color: Colors.black.withValues(alpha: .62),
+                child: SingleChildScrollView(
+                  padding: const EdgeInsets.all(14),
+                  child: SelectableText(
+                    prompt,
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 12,
+                      height: 1.45,
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
       ],
     );
   }
