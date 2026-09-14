@@ -8,6 +8,8 @@ on:
         required: true
         type: string
   push:
+    branches:
+      - 'release/v*'
     tags:
       - 'v*'
 
@@ -38,6 +40,8 @@ jobs:
         run: |
           if [[ "$GITHUB_EVENT_NAME" == "workflow_dispatch" ]]; then
             tag="$REQUESTED_TAG"
+          elif [[ "$GITHUB_REF_TYPE" == "branch" && "$GITHUB_REF_NAME" == release/v* ]]; then
+            tag="${GITHUB_REF_NAME#release/}"
           else
             tag="$GITHUB_REF_NAME"
           fi
