@@ -73,6 +73,7 @@ macOS and Windows x64 ZIPs in one GitHub Release. A release can be started in
 either of these ways:
 
 - Push a version tag such as `v0.1.0-beta.2`.
+- Push a release branch such as `release/v0.1.0-beta.2`.
 - Open **Actions → Desktop Release → Run workflow** and enter the release tag.
 
 The tag's `major.minor.patch` portion must match `version` in `pubspec.yaml`.
